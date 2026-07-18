@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gemtrade"
+version = "0.1.0"
+description = "Autonomous AI Trading Agent - Built on GemCode + Automaton"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [
+    { name = "GemTrade Team" }
+]
+keywords = [
+    "trading",
+    "ai",
+    "autonomous",
+    "agent",
+    "gemini",
+    "llm",
+    "multi-agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    # Core dependency - GemCode provides agent mesh, event bus, tools, memory
+    "gemcode>=0.4.25",
+    
+    # Trading-specific
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "ta>=0.11.0",  # Technical analysis library
+    
+    # Exchange connectors
+    "ccxt>=4.0.0",  # Crypto exchanges
+    "oandapyV20>=0.7.0",  # OANDA forex
+    "alpaca-py>=0.20.0",  # Alpaca stocks
+    
+    # Utilities
+    "python-dateutil>=2.8.0",
+    "pytz>=2023.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+all = [
+    "gemtrade[dev]",
+]
+
+[project.scripts]
+gemtrade = "gemtrade.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/spiderdev27/gemtrade"
+Documentation = "https://github.com/spiderdev27/gemtrade/docs"
+Repository = "https://github.com/spiderdev27/gemtrade"
+
+[tool.hatch.build.targets.wheel]
+packages = ["gemtrade"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
