@@ -1,6 +1,6 @@
 # GemTrade
 
-**Autonomous AI Trading Agent**
+**Autonomous AI Trading Agent for Indian Markets**
 
 Built on [GemCode](https://github.com/Veoksha/GemCode) (multi-agent mesh, event bus, habits, triggers) with [Automaton](https://github.com/spiderdev27/automaton) concepts (survival tiers, constitution, financial state management).
 
@@ -8,11 +8,18 @@ Built on [GemCode](https://github.com/Veoksha/GemCode) (multi-agent mesh, event 
 
 ## What is GemTrade?
 
-GemTrade is a self-learning, self-managing trading AI that:
+GemTrade is a self-learning, self-managing trading AI designed for:
 
+- **Starting capital**: ₹5,000 INR (~$60 USD)
+- **High leverage**: Supports 1:100 to 1:2000 (broker dependent)
+- **Primary focus**: XAU/USD (Gold) on MT5
+- **Secondary**: Crypto derivatives on Delta Exchange India
+
+Key features:
 - **Runs autonomously** via GemCode's agent mesh and habit scheduler
 - **Enforces immutable risk rules** (constitution) that no agent can override
-- **Adapts to capital levels** with survival tiers (HIGH → CRITICAL → DEAD)
+- **Adapts to capital levels** with INR-based survival tiers
+- **Leverage is EARNED** - starts at 1:100, increases only with proven profits
 - **Learns from every trade** through procedural memory ("feeling", not just remembering)
 - **Coordinates multiple agents** (Analyst, Strategist, Overseer, Executor, Learner)
 
@@ -22,11 +29,23 @@ GemTrade is a self-learning, self-managing trading AI that:
 # Install
 pip install gemtrade
 
-# Set API key
+# Set API keys
 export GOOGLE_API_KEY="your-key"
 
-# Run in super mode (paper trading)
-gemtrade -C /path/to/project --super
+# For Delta Exchange
+export DELTA_API_KEY="your-delta-key"
+export DELTA_API_SECRET="your-delta-secret"
+
+# For MT5 (forex/gold)
+export MT5_LOGIN="your-login"
+export MT5_PASSWORD="your-password"
+export MT5_SERVER="your-broker-server"
+
+# Initialize with INR 5,000 starting capital
+gemtrade init
+
+# Run paper trading
+gemtrade run --paper
 
 # Check status
 gemtrade status
@@ -84,17 +103,21 @@ These rules are **IMMUTABLE** - no agent can modify or bypass them:
 | 50% Reserve | Must maintain 50% cash reserve |
 | Max 3 Positions | Maximum 3 concurrent positions |
 
-## Survival Tiers
+## Survival Tiers (INR)
 
 GemTrade automatically adjusts behavior based on capital:
 
-| Tier | Balance | Capabilities |
-|------|---------|--------------|
-| 🟢 HIGH | > $500 | Full power: 5% positions, quality models |
-| 🟢 NORMAL | > $50 | Standard: 3% positions, balanced models |
-| 🟠 LOW | > $10 | Reduced: 1% positions, fast models |
-| 🔴 CRITICAL | > $1 | Close-only mode, no new positions |
-| ⚫ DEAD | $0 | Cannot trade, requires recovery |
+| Tier | Balance | Max Leverage | Capabilities |
+|------|---------|--------------|--------------|
+| 🟢 HIGH | > ₹50,000 | 1:500 | **Earned** - Full power, 5% positions |
+| 🟢 NORMAL | > ₹5,000 | 1:100 | Starting tier, 3% positions |
+| 🟠 LOW | > ₹1,000 | 1:50 | Reduced risk, 2% positions |
+| 🔴 CRITICAL | > ₹100 | 1:10 | Close-only mode |
+| ⚫ DEAD | ₹0 | N/A | Cannot trade |
+
+**Key principle**: Leverage is EARNED through profitable trading, not given freely.
+With ₹5,000 and 1:2000 leverage available from broker, a 0.05% adverse move = 100% loss.
+We start conservative at 1:100 and increase only with proven track record.
 
 ## Procedural Memory ("Feeling")
 
@@ -129,25 +152,43 @@ GemTrade extends GemCode, so you get:
 ```json
 // .gemcode/trading/config.json
 {
-  "default_symbol": "XAU/USD",
-  "exchange": {
-    "type": "paper",
+  "name": "gemtrade",
+  "currency": "INR",
+  "initial_balance_paise": 500000,
+  "default_symbol": "XAUUSD",
+  "primary_exchange": {
+    "type": "mt5",
     "sandbox": true
   },
   "risk": {
-    "max_position_pct": 5.0,
+    "max_position_pct": 3.0,
+    "max_concurrent_positions": 2,
     "max_daily_loss_pct": 3.0,
-    "max_drawdown_pct": 20.0
+    "max_drawdown_pct": 20.0,
+    "max_risk_per_trade_pct": 2.0,
+    "leverage": {
+      "broker_max": 2000,
+      "starting_max": 100,
+      "earned_max": 500
+    }
   },
   "strategies": [
     {
       "name": "ema_crossover",
       "enabled": true,
-      "symbols": ["XAU/USD"]
+      "symbols": ["XAUUSD"]
     }
   ]
 }
 ```
+
+## Supported Exchanges
+
+| Exchange | Type | Instruments | Leverage | Python Package |
+|----------|------|-------------|----------|----------------|
+| **MT5** | Forex/CFD | XAU/USD, Forex | 1:500+ | `MetaTrader5` |
+| **Delta Exchange India** | Crypto | BTC, ETH perps | 1:100 | `delta-rest-client` |
+| **Paper** | Simulated | All | Any | Built-in |
 
 ## Trading Habits
 
