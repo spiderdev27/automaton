@@ -1,719 +1,487 @@
 """
 Gemini-Powered Market Intelligence
 
-This module provides real-time market intelligence using:
-- Gemini Web Search Grounding for live news
-- Multi-hop reasoning for indirect signals
-- Sentiment extraction from diverse sources
-- Event-driven signal generation
+The brain of autonomous trading decisions.
+Uses Gemini's web search grounding to gather real-time intelligence
+and make informed trading decisions without predefined rules.
+
+This replaces traditional indicator-based strategies with
+AI-driven reasoning about market conditions.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from enum import Enum
-from typing import List, Dict, Optional, Any, Tuple
-import asyncio
+from __future__ import annotations
+
 import json
-import re
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
-from gemtrade.cloud.gemini_client import (
-    GeminiClient, 
-    GeminiConfig, 
-    GeminiModel,
-    GroundedResponse,
-)
+from gemtrade.cloud.gemini_client import GeminiClient, GroundedResponse
 
 
-class SignalDirection(Enum):
-    """Trading signal direction."""
+class SignalType(Enum):
+    """Trading signal types."""
     STRONG_BUY = "strong_buy"
     BUY = "buy"
-    NEUTRAL = "neutral"
+    HOLD = "hold"
     SELL = "sell"
     STRONG_SELL = "strong_sell"
+    AVOID = "avoid"  # Don't trade
 
 
-class SignalTimeframe(Enum):
-    """Signal time horizon."""
-    IMMEDIATE = "immediate"      # Minutes
-    SHORT_TERM = "short_term"    # Hours
-    MEDIUM_TERM = "medium_term"  # Days
-    LONG_TERM = "long_term"      # Weeks
-
-
-class InsightType(Enum):
-    """Type of market insight."""
-    NEWS = "news"
-    SENTIMENT = "sentiment"
-    ECONOMIC = "economic"
-    TECHNICAL = "technical"
-    INDIRECT = "indirect"
-    CONTRARIAN = "contrarian"
+class MarketCondition(Enum):
+    """Current market condition."""
+    TRENDING_UP = "trending_up"
+    TRENDING_DOWN = "trending_down"
+    RANGING = "ranging"
+    HIGH_VOLATILITY = "high_volatility"
+    NEWS_DRIVEN = "news_driven"
+    UNCERTAIN = "uncertain"
 
 
 @dataclass
 class MarketInsight:
-    """A single market insight."""
-    type: InsightType
-    symbol: str
-    headline: str
-    content: str
-    
-    # Signal properties
-    direction: SignalDirection = SignalDirection.NEUTRAL
-    timeframe: SignalTimeframe = SignalTimeframe.SHORT_TERM
-    confidence: float = 0.5  # 0-1
-    
-    # Metadata
-    source: str = ""
-    source_url: str = ""
+    """A market insight from analysis."""
+    topic: str
+    insight: str
+    sentiment: float  # -1 to 1
+    confidence: float  # 0 to 1
+    sources: List[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=datetime.utcnow)
-    
-    # Context
-    reasoning: str = ""
-    related_symbols: List[str] = field(default_factory=list)
-    tags: List[str] = field(default_factory=list)
-    
-    def is_actionable(self, min_confidence: float = 0.6) -> bool:
-        """Check if insight is actionable."""
-        return (
-            self.confidence >= min_confidence and
-            self.direction != SignalDirection.NEUTRAL
-        )
-    
-    def to_dict(self) -> Dict:
-        """Convert to dictionary."""
-        return {
-            "type": self.type.value,
-            "symbol": self.symbol,
-            "headline": self.headline,
-            "direction": self.direction.value,
-            "confidence": self.confidence,
-            "timeframe": self.timeframe.value,
-            "source": self.source,
-            "reasoning": self.reasoning,
-        }
 
 
 @dataclass
 class IntelligenceQuery:
-    """Query for market intelligence."""
-    symbols: List[str]
-    
-    # Search parameters
-    timeframe: str = "last 24 hours"
-    include_indirect: bool = True
+    """A query for market intelligence."""
+    symbol: str = "XAUUSD"
+    include_news: bool = True
+    include_sentiment: bool = True
+    include_economic: bool = True
     include_contrarian: bool = True
-    
-    # Focus areas
-    focus_news: bool = True
-    focus_sentiment: bool = True
-    focus_economic: bool = True
-    
-    # Context
-    current_positions: Dict[str, str] = field(default_factory=dict)  # symbol -> "long"|"short"
-    market_regime: str = "normal"  # "trending", "ranging", "volatile", "news_active"
+    depth: str = "medium"  # quick, medium, thorough
 
 
 @dataclass
 class IntelligenceResult:
-    """Result of intelligence gathering."""
-    query: IntelligenceQuery
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    """Complete intelligence result."""
+    symbol: str
+    timestamp: datetime
+    
+    # Analysis
+    condition: MarketCondition
+    signal: SignalType
+    confidence: float
+    
+    # Reasoning
+    reasoning: str
+    key_factors: List[str]
     
     # Insights
-    insights: List[MarketInsight] = field(default_factory=list)
+    news_insights: List[MarketInsight] = field(default_factory=list)
+    sentiment_insights: List[MarketInsight] = field(default_factory=list)
+    economic_insights: List[MarketInsight] = field(default_factory=list)
     
-    # Aggregated signals
-    signals: Dict[str, SignalDirection] = field(default_factory=dict)  # symbol -> direction
-    confidence_scores: Dict[str, float] = field(default_factory=dict)  # symbol -> confidence
+    # Sources
+    sources: List[str] = field(default_factory=list)
     
-    # Economic calendar
-    upcoming_events: List[Dict] = field(default_factory=list)
+    # Action
+    recommended_action: Optional[str] = None
+    risk_factors: List[str] = field(default_factory=list)
     
-    # Summary
-    market_summary: str = ""
-    key_risks: List[str] = field(default_factory=list)
-    
-    # Metadata
-    sources_consulted: int = 0
-    tokens_used: int = 0
-    cached_responses: int = 0
-    
-    def get_actionable_insights(self, min_confidence: float = 0.6) -> List[MarketInsight]:
-        """Get insights that meet confidence threshold."""
-        return [i for i in self.insights if i.is_actionable(min_confidence)]
-    
-    def get_signal(self, symbol: str) -> Tuple[SignalDirection, float]:
-        """Get aggregated signal for symbol."""
-        return (
-            self.signals.get(symbol, SignalDirection.NEUTRAL),
-            self.confidence_scores.get(symbol, 0.0),
-        )
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "timestamp": self.timestamp.isoformat(),
+            "condition": self.condition.value,
+            "signal": self.signal.value,
+            "confidence": self.confidence,
+            "reasoning": self.reasoning,
+            "key_factors": self.key_factors,
+            "recommended_action": self.recommended_action,
+            "risk_factors": self.risk_factors,
+        }
 
 
 class GeminiIntelligence:
     """
-    Market intelligence system powered by Gemini.
+    AI-powered market intelligence.
     
-    Uses web search grounding to get real-time information
-    and multi-hop reasoning to detect indirect signals.
+    This is the decision-making brain that:
+    1. Gathers real-time information via web search
+    2. Analyzes sentiment and news
+    3. Performs multi-hop reasoning
+    4. Generates trading signals
+    5. Explains its reasoning
+    
+    No predefined rules - just intelligent analysis.
     """
     
-    def __init__(self, config: Optional[GeminiConfig] = None):
-        self.client = GeminiClient(config)
-        
-        # Symbol relationships for indirect signal detection
-        self.symbol_relationships = {
-            "XAUUSD": {
-                "positive_correlations": ["DXY inverse", "inflation fears", "geopolitical risk"],
-                "negative_correlations": ["risk-on sentiment", "crypto rally", "strong dollar"],
-                "related_searches": [
-                    "gold price news",
-                    "federal reserve interest rates",
-                    "inflation data",
-                    "geopolitical tensions",
-                    "central bank gold purchases",
-                ],
-            },
-            "BTCUSD": {
-                "positive_correlations": ["crypto adoption", "ETF flows", "macro liquidity"],
-                "negative_correlations": ["regulation crackdown", "exchange hack", "tether fears"],
-                "related_searches": [
-                    "bitcoin news",
-                    "crypto regulation",
-                    "bitcoin ETF flows",
-                    "whale movements",
-                    "crypto exchange news",
-                ],
-            },
-        }
+    def __init__(self):
+        self.client = GeminiClient()
+        self._cache: Dict[str, IntelligenceResult] = {}
+        self._cache_ttl_seconds = 300  # 5 minutes
     
     async def gather_intelligence(
-        self, 
-        query: IntelligenceQuery
+        self,
+        query: IntelligenceQuery,
     ) -> IntelligenceResult:
         """
         Gather comprehensive market intelligence.
         
-        This is the main entry point for getting trading signals.
+        This is the main entry point for getting trading decisions.
         """
-        result = IntelligenceResult(query=query)
+        # Check cache
+        cache_key = f"{query.symbol}:{query.depth}"
+        if cache_key in self._cache:
+            cached = self._cache[cache_key]
+            age = (datetime.utcnow() - cached.timestamp).total_seconds()
+            if age < self._cache_ttl_seconds:
+                return cached
         
-        # Parallel gathering
-        tasks = []
+        # Gather insights in parallel
+        insights = {
+            "news": [],
+            "sentiment": [],
+            "economic": [],
+            "contrarian": [],
+        }
+        sources = []
         
-        for symbol in query.symbols:
-            # Direct news
-            if query.focus_news:
-                tasks.append(self._gather_news(symbol, query.timeframe))
-            
-            # Sentiment
-            if query.focus_sentiment:
-                tasks.append(self._gather_sentiment(symbol))
-            
-            # Indirect signals
-            if query.include_indirect:
-                tasks.append(self._gather_indirect_signals(symbol))
+        if query.include_news:
+            news_result = await self._gather_news(query.symbol)
+            insights["news"] = news_result.get("insights", [])
+            sources.extend(news_result.get("sources", []))
         
-        # Economic calendar (once for all)
-        if query.focus_economic:
-            tasks.append(self._gather_economic_events())
+        if query.include_sentiment:
+            sentiment_result = await self._gather_sentiment(query.symbol)
+            insights["sentiment"] = sentiment_result.get("insights", [])
+            sources.extend(sentiment_result.get("sources", []))
         
-        # Execute all
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        if query.include_economic:
+            economic_result = await self._gather_economic()
+            insights["economic"] = economic_result.get("insights", [])
+            sources.extend(economic_result.get("sources", []))
         
-        # Process responses
-        for response in responses:
-            if isinstance(response, Exception):
-                continue
-            if isinstance(response, list):
-                result.insights.extend(response)
-            elif isinstance(response, dict) and "events" in response:
-                result.upcoming_events = response["events"]
-        
-        # Aggregate signals
-        result.signals, result.confidence_scores = self._aggregate_signals(
-            result.insights, 
-            query.symbols
-        )
-        
-        # Generate summary
-        result.market_summary = await self._generate_summary(result)
-        
-        # Contrarian analysis
         if query.include_contrarian:
-            contrarian_insights = await self._contrarian_analysis(
-                result.insights,
-                query.current_positions
-            )
-            result.insights.extend(contrarian_insights)
+            contrarian = await self._contrarian_analysis(query.symbol, insights)
+            insights["contrarian"] = contrarian.get("insights", [])
+        
+        # Synthesize into final decision
+        result = await self._synthesize_decision(query.symbol, insights, sources)
+        
+        # Cache result
+        self._cache[cache_key] = result
         
         return result
     
-    async def _gather_news(
-        self, 
-        symbol: str, 
-        timeframe: str
-    ) -> List[MarketInsight]:
-        """Gather news for a symbol."""
-        insights = []
-        
-        # Get related search terms
-        related = self.symbol_relationships.get(symbol, {})
-        searches = related.get("related_searches", [f"{symbol} news"])
-        
-        # Main query
-        query = f"Latest {symbol} trading news and price analysis {timeframe}"
+    async def _gather_news(self, symbol: str) -> Dict[str, Any]:
+        """Gather and analyze news."""
+        symbol_name = {
+            "XAUUSD": "gold",
+            "BTCUSD": "bitcoin",
+            "EURUSD": "euro dollar",
+        }.get(symbol, symbol)
         
         response = await self.client.analyze_news(
-            query=query,
-            symbols=[symbol],
-            timeframe=timeframe,
-        )
-        
-        # Parse response
-        parsed = self._parse_news_response(response, symbol)
-        insights.extend(parsed)
-        
-        return insights
-    
-    async def _gather_sentiment(self, symbol: str) -> List[MarketInsight]:
-        """Gather sentiment data."""
-        prompt = f"""Search for current market sentiment on {symbol}.
-
-Look for:
-1. Social media sentiment (Reddit, Twitter/X)
-2. Analyst opinions and price targets
-3. Institutional positioning
-4. Retail trader sentiment
-5. Options market sentiment (put/call ratios)
-
-Return JSON:
-{{
-    "overall_sentiment": "bullish|bearish|neutral",
-    "confidence": 0-100,
-    "social_sentiment": "...",
-    "institutional_view": "...",
-    "retail_sentiment": "...",
-    "key_points": ["..."]
-}}"""
-
-        response = await self.client.generate(
-            prompt=prompt,
-            model=GeminiModel.FLASH,
-            grounded=True,
+            f"{symbol_name} price market",
+            symbols=[symbol]
         )
         
         insights = []
-        try:
-            # Extract JSON from response
-            data = self._extract_json(response.text)
-            if data:
-                direction = self._sentiment_to_direction(data.get("overall_sentiment", "neutral"))
-                confidence = data.get("confidence", 50) / 100
-                
-                insights.append(MarketInsight(
-                    type=InsightType.SENTIMENT,
-                    symbol=symbol,
-                    headline=f"Market Sentiment: {data.get('overall_sentiment', 'neutral').title()}",
-                    content=json.dumps(data),
-                    direction=direction,
-                    confidence=confidence,
-                    source="Gemini Web Search",
-                    reasoning="; ".join(data.get("key_points", [])),
-                ))
-        except Exception:
-            pass
         
-        return insights
-    
-    async def _gather_indirect_signals(self, symbol: str) -> List[MarketInsight]:
-        """Gather indirect signals that might affect the symbol."""
-        related = self.symbol_relationships.get(symbol, {})
-        if not related:
-            return []
-        
-        positive_correlations = related.get("positive_correlations", [])
-        negative_correlations = related.get("negative_correlations", [])
-        
-        prompt = f"""Search for news about factors that indirectly affect {symbol}.
-
-POSITIVE for {symbol}:
-{', '.join(positive_correlations)}
-
-NEGATIVE for {symbol}:
-{', '.join(negative_correlations)}
-
-Look for recent news about these factors and analyze their impact on {symbol}.
-
-Return JSON:
-{{
-    "indirect_signals": [
-        {{
-            "factor": "...",
-            "news": "...",
-            "impact_on_{symbol.lower()}": "positive|negative|neutral",
-            "strength": "strong|moderate|weak",
-            "reasoning": "..."
-        }}
-    ],
-    "net_impact": "positive|negative|neutral",
-    "confidence": 0-100
-}}"""
-
-        response = await self.client.generate(
-            prompt=prompt,
-            model=GeminiModel.FLASH,
-            grounded=True,
-        )
-        
-        insights = []
-        try:
-            data = self._extract_json(response.text)
-            if data and "indirect_signals" in data:
-                for signal in data["indirect_signals"]:
-                    impact = signal.get(f"impact_on_{symbol.lower()}", "neutral")
-                    direction = self._sentiment_to_direction(impact)
-                    strength = signal.get("strength", "moderate")
-                    confidence = {"strong": 0.8, "moderate": 0.6, "weak": 0.4}.get(strength, 0.5)
-                    
-                    insights.append(MarketInsight(
-                        type=InsightType.INDIRECT,
-                        symbol=symbol,
-                        headline=f"Indirect: {signal.get('factor', 'Unknown factor')}",
-                        content=signal.get("news", ""),
-                        direction=direction,
-                        confidence=confidence,
-                        source="Gemini Analysis",
-                        reasoning=signal.get("reasoning", ""),
-                        tags=["indirect", signal.get("factor", "").lower()],
-                    ))
-        except Exception:
-            pass
-        
-        return insights
-    
-    async def _gather_economic_events(self) -> Dict:
-        """Gather upcoming economic events."""
-        response = await self.client.get_economic_calendar(days_ahead=7)
-        
-        events = []
-        try:
-            # Parse events from response
-            lines = response.text.split("\n")
-            current_event = {}
+        # Parse the response
+        if response.text:
+            # Extract sentiment from response
+            sentiment = 0.0
+            if "bullish" in response.text.lower():
+                sentiment = 0.5
+            elif "bearish" in response.text.lower():
+                sentiment = -0.5
             
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    if current_event:
-                        events.append(current_event)
-                        current_event = {}
-                    continue
-                
-                # Simple parsing - would need more robust parsing in production
-                if "Date:" in line or "Time:" in line:
-                    current_event["datetime"] = line.split(":", 1)[-1].strip()
-                elif "Event:" in line:
-                    current_event["event"] = line.split(":", 1)[-1].strip()
-                elif "Impact:" in line:
-                    current_event["impact"] = line.split(":", 1)[-1].strip()
-        except Exception:
-            pass
+            insights.append(MarketInsight(
+                topic=f"{symbol} News",
+                insight=response.text[:500],  # Truncate for storage
+                sentiment=sentiment,
+                confidence=0.7,
+                sources=[s.url for s in response.sources[:3]],
+            ))
         
-        return {"events": events}
+        return {
+            "insights": insights,
+            "sources": [s.url for s in response.sources],
+        }
+    
+    async def _gather_sentiment(self, symbol: str) -> Dict[str, Any]:
+        """Gather market sentiment."""
+        prompt = f"""Analyze current market sentiment for {symbol}:
+
+1. Search for what traders and analysts are saying
+2. Check social media sentiment (Twitter/X, Reddit)
+3. Look at positioning data if available
+4. Check institutional vs retail sentiment
+
+Provide:
+- OVERALL_SENTIMENT: bullish/bearish/neutral (0-100% confidence)
+- RETAIL_SENTIMENT: What retail traders think
+- INSTITUTIONAL_SENTIMENT: What institutions are doing
+- CONTRARIAN_SIGNAL: If sentiment is extreme (potential reversal)"""
+        
+        response = await self.client.generate(prompt, enable_search=True)
+        
+        insights = []
+        if response.text:
+            sentiment = 0.0
+            if "bullish" in response.text.lower():
+                sentiment = 0.3
+            elif "bearish" in response.text.lower():
+                sentiment = -0.3
+            
+            insights.append(MarketInsight(
+                topic="Market Sentiment",
+                insight=response.text[:500],
+                sentiment=sentiment,
+                confidence=0.6,
+                sources=[s.url for s in response.sources[:3]],
+            ))
+        
+        return {
+            "insights": insights,
+            "sources": [s.url for s in response.sources],
+        }
+    
+    async def _gather_economic(self) -> Dict[str, Any]:
+        """Gather economic calendar and data."""
+        response = await self.client.get_economic_calendar(["USD", "EUR"])
+        
+        insights = []
+        if response.text:
+            insights.append(MarketInsight(
+                topic="Economic Calendar",
+                insight=response.text[:500],
+                sentiment=0.0,
+                confidence=0.8,
+                sources=[s.url for s in response.sources[:3]],
+            ))
+        
+        return {
+            "insights": insights,
+            "sources": [s.url for s in response.sources],
+        }
     
     async def _contrarian_analysis(
         self,
-        insights: List[MarketInsight],
-        positions: Dict[str, str],
-    ) -> List[MarketInsight]:
-        """
-        Perform contrarian analysis.
+        symbol: str,
+        current_insights: Dict[str, List[MarketInsight]],
+    ) -> Dict[str, Any]:
+        """Perform contrarian analysis - challenge the consensus."""
+        # Determine current consensus
+        total_sentiment = 0.0
+        count = 0
+        for category in current_insights.values():
+            for insight in category:
+                total_sentiment += insight.sentiment
+                count += 1
         
-        Looks for reasons why the consensus might be wrong.
-        """
-        contrarian_insights = []
+        avg_sentiment = total_sentiment / count if count > 0 else 0.0
         
-        # Group insights by symbol
-        by_symbol: Dict[str, List[MarketInsight]] = {}
-        for insight in insights:
-            if insight.symbol not in by_symbol:
-                by_symbol[insight.symbol] = []
-            by_symbol[insight.symbol].append(insight)
+        if abs(avg_sentiment) > 0.4:  # Strong consensus
+            direction = "bullish" if avg_sentiment > 0 else "bearish"
+            
+            prompt = f"""The current consensus on {symbol} is strongly {direction}.
+
+Play devil's advocate:
+1. What could go wrong for the consensus view?
+2. Are there any overlooked risks?
+3. Is sentiment too extreme (contrarian signal)?
+4. What would cause a reversal?
+
+Be critical and challenge the prevailing view."""
+            
+            response = await self.client.generate(prompt, enable_search=True)
+            
+            if response.text:
+                return {
+                    "insights": [MarketInsight(
+                        topic="Contrarian Analysis",
+                        insight=response.text[:500],
+                        sentiment=-avg_sentiment * 0.3,  # Counter the consensus slightly
+                        confidence=0.5,
+                        sources=[s.url for s in response.sources[:3]],
+                    )],
+                    "sources": [],
+                }
         
-        for symbol, symbol_insights in by_symbol.items():
-            # Determine consensus
-            bullish = sum(1 for i in symbol_insights if i.direction in [SignalDirection.BUY, SignalDirection.STRONG_BUY])
-            bearish = sum(1 for i in symbol_insights if i.direction in [SignalDirection.SELL, SignalDirection.STRONG_SELL])
-            
-            if bullish == 0 and bearish == 0:
-                continue
-            
-            consensus = "bullish" if bullish > bearish else "bearish" if bearish > bullish else "mixed"
-            
-            prompt = f"""The current consensus on {symbol} is {consensus} based on {len(symbol_insights)} signals.
-
-Key bullish points: {bullish} signals
-Key bearish points: {bearish} signals
-
-Search for contrarian arguments - reasons why this consensus might be wrong.
-
-Look for:
-1. Ignored risks or opportunities
-2. Historical parallels where consensus was wrong
-3. Contrarian positioning by smart money
-4. Technical divergences
-5. Sentiment extremes that often precede reversals
-
-Return JSON:
-{{
-    "contrarian_view": "...",
-    "key_arguments": ["..."],
-    "probability_consensus_wrong": 0-100,
-    "potential_catalyst": "..."
-}}"""
-
-            response = await self.client.generate(
-                prompt=prompt,
-                model=GeminiModel.PRO,  # Better reasoning for contrarian analysis
-                grounded=True,
-            )
-            
-            try:
-                data = self._extract_json(response.text)
-                if data:
-                    prob = data.get("probability_consensus_wrong", 30)
-                    if prob > 40:  # Only include meaningful contrarian signals
-                        # Contrarian direction is opposite of consensus
-                        if consensus == "bullish":
-                            direction = SignalDirection.SELL
-                        elif consensus == "bearish":
-                            direction = SignalDirection.BUY
-                        else:
-                            direction = SignalDirection.NEUTRAL
-                        
-                        contrarian_insights.append(MarketInsight(
-                            type=InsightType.CONTRARIAN,
-                            symbol=symbol,
-                            headline=f"Contrarian: {data.get('contrarian_view', 'Consider opposite view')}",
-                            content=data.get("potential_catalyst", ""),
-                            direction=direction,
-                            confidence=prob / 100,
-                            source="Gemini Contrarian Analysis",
-                            reasoning="; ".join(data.get("key_arguments", [])),
-                            tags=["contrarian", consensus],
-                        ))
-            except Exception:
-                pass
-        
-        return contrarian_insights
+        return {"insights": [], "sources": []}
     
-    def _aggregate_signals(
+    async def _synthesize_decision(
         self,
-        insights: List[MarketInsight],
-        symbols: List[str],
-    ) -> Tuple[Dict[str, SignalDirection], Dict[str, float]]:
-        """Aggregate insights into trading signals."""
-        signals = {}
-        confidences = {}
+        symbol: str,
+        insights: Dict[str, List[MarketInsight]],
+        sources: List[str],
+    ) -> IntelligenceResult:
+        """Synthesize all insights into a final decision."""
+        # Prepare context for Gemini
+        context_parts = []
         
-        for symbol in symbols:
-            symbol_insights = [i for i in insights if i.symbol == symbol]
-            if not symbol_insights:
-                signals[symbol] = SignalDirection.NEUTRAL
-                confidences[symbol] = 0.0
-                continue
-            
-            # Weight by confidence and type
-            type_weights = {
-                InsightType.NEWS: 1.0,
-                InsightType.SENTIMENT: 0.8,
-                InsightType.ECONOMIC: 1.2,
-                InsightType.INDIRECT: 0.6,
-                InsightType.CONTRARIAN: 0.5,
-            }
-            
-            direction_scores = {
-                SignalDirection.STRONG_BUY: 2,
-                SignalDirection.BUY: 1,
-                SignalDirection.NEUTRAL: 0,
-                SignalDirection.SELL: -1,
-                SignalDirection.STRONG_SELL: -2,
-            }
-            
-            weighted_score = 0.0
-            total_weight = 0.0
-            
-            for insight in symbol_insights:
-                weight = type_weights.get(insight.type, 1.0) * insight.confidence
-                score = direction_scores.get(insight.direction, 0)
-                weighted_score += score * weight
-                total_weight += weight
-            
-            if total_weight > 0:
-                avg_score = weighted_score / total_weight
-                
-                # Convert score back to direction
-                if avg_score >= 1.5:
-                    signals[symbol] = SignalDirection.STRONG_BUY
-                elif avg_score >= 0.5:
-                    signals[symbol] = SignalDirection.BUY
-                elif avg_score <= -1.5:
-                    signals[symbol] = SignalDirection.STRONG_SELL
-                elif avg_score <= -0.5:
-                    signals[symbol] = SignalDirection.SELL
-                else:
-                    signals[symbol] = SignalDirection.NEUTRAL
-                
-                # Confidence based on agreement
-                confidences[symbol] = min(1.0, total_weight / len(symbol_insights))
+        for category, insight_list in insights.items():
+            if insight_list:
+                context_parts.append(f"=== {category.upper()} ===")
+                for insight in insight_list:
+                    context_parts.append(f"- {insight.topic}: {insight.insight}")
+                    context_parts.append(f"  Sentiment: {insight.sentiment:.2f}, Confidence: {insight.confidence:.2f}")
+                context_parts.append("")
+        
+        context = "\n".join(context_parts)
+        
+        prompt = f"""Based on this market intelligence for {symbol}:
+
+{context}
+
+Make a trading decision. You must decide:
+
+1. MARKET_CONDITION: One of: trending_up, trending_down, ranging, high_volatility, news_driven, uncertain
+
+2. SIGNAL: One of: strong_buy, buy, hold, sell, strong_sell, avoid
+
+3. CONFIDENCE: 0.0 to 1.0 (how confident are you?)
+
+4. REASONING: Explain your decision in 2-3 sentences
+
+5. KEY_FACTORS: List 3-5 key factors driving this decision
+
+6. RECOMMENDED_ACTION: Specific action to take (or "wait")
+
+7. RISK_FACTORS: List potential risks
+
+Be decisive. Avoid "hold" unless genuinely uncertain.
+Format your response as JSON."""
+        
+        response = await self.client.generate(
+            prompt,
+            system_instruction="You are a senior trader making real money decisions. Be decisive and clear.",
+            enable_search=False,  # We have the context
+            use_pro=True,  # Use Pro for final decision
+        )
+        
+        # Parse the response
+        try:
+            # Try to extract JSON from response
+            text = response.text
+            json_start = text.find("{")
+            json_end = text.rfind("}") + 1
+            if json_start >= 0 and json_end > json_start:
+                data = json.loads(text[json_start:json_end])
             else:
-                signals[symbol] = SignalDirection.NEUTRAL
-                confidences[symbol] = 0.0
-        
-        return signals, confidences
-    
-    async def _generate_summary(self, result: IntelligenceResult) -> str:
-        """Generate human-readable summary."""
-        if not result.insights:
-            return "No significant market insights gathered."
-        
-        # Simple summary without another API call
-        lines = [f"Market Intelligence Summary ({len(result.insights)} insights):"]
-        
-        for symbol in result.query.symbols:
-            direction, confidence = result.get_signal(symbol)
-            lines.append(f"  {symbol}: {direction.value} (confidence: {confidence:.0%})")
-        
-        actionable = result.get_actionable_insights()
-        if actionable:
-            lines.append(f"\nActionable signals: {len(actionable)}")
-        
-        if result.upcoming_events:
-            lines.append(f"\nUpcoming events: {len(result.upcoming_events)}")
-        
-        return "\n".join(lines)
-    
-    def _parse_news_response(
-        self, 
-        response: GroundedResponse, 
-        symbol: str
-    ) -> List[MarketInsight]:
-        """Parse news analysis response into insights."""
-        insights = []
-        
-        try:
-            data = self._extract_json(response.text)
-            if data and "news_items" in data:
-                for item in data["news_items"]:
-                    sentiment = item.get("sentiment", "neutral")
-                    direction = self._sentiment_to_direction(sentiment)
-                    
-                    impact_multiplier = {
-                        "high": 1.0,
-                        "medium": 0.7,
-                        "low": 0.4,
-                    }.get(item.get("impact", "medium"), 0.7)
-                    
-                    confidence = (item.get("confidence", 50) / 100) * impact_multiplier
-                    
-                    timeframe_map = {
-                        "immediate": SignalTimeframe.IMMEDIATE,
-                        "short-term": SignalTimeframe.SHORT_TERM,
-                        "medium-term": SignalTimeframe.MEDIUM_TERM,
-                    }
-                    timeframe = timeframe_map.get(
-                        item.get("timeframe", "short-term"),
-                        SignalTimeframe.SHORT_TERM
-                    )
-                    
-                    insights.append(MarketInsight(
-                        type=InsightType.NEWS,
-                        symbol=symbol,
-                        headline=item.get("headline", "Unknown"),
-                        content=item.get("reasoning", ""),
-                        direction=direction,
-                        timeframe=timeframe,
-                        confidence=confidence,
-                        source=item.get("source", "Unknown"),
-                        reasoning=item.get("reasoning", ""),
-                        related_symbols=item.get("affected_symbols", []),
-                    ))
-        except Exception:
-            # If parsing fails, create a generic insight from the raw response
-            if response.text and len(response.text) > 50:
-                insights.append(MarketInsight(
-                    type=InsightType.NEWS,
-                    symbol=symbol,
-                    headline=f"News analysis for {symbol}",
-                    content=response.text[:500],
-                    source="Gemini Web Search",
-                ))
-        
-        return insights
-    
-    def _sentiment_to_direction(self, sentiment: str) -> SignalDirection:
-        """Convert sentiment string to SignalDirection."""
-        sentiment = sentiment.lower()
-        if sentiment in ["bullish", "positive", "buy"]:
-            return SignalDirection.BUY
-        elif sentiment in ["very bullish", "strong buy", "strongly positive"]:
-            return SignalDirection.STRONG_BUY
-        elif sentiment in ["bearish", "negative", "sell"]:
-            return SignalDirection.SELL
-        elif sentiment in ["very bearish", "strong sell", "strongly negative"]:
-            return SignalDirection.STRONG_SELL
-        else:
-            return SignalDirection.NEUTRAL
-    
-    def _extract_json(self, text: str) -> Optional[Dict]:
-        """Extract JSON from text that may contain other content."""
-        # Try to find JSON in the text
-        try:
-            # First try direct parse
-            return json.loads(text)
+                data = {}
         except json.JSONDecodeError:
-            pass
+            data = {}
         
-        # Look for JSON block
-        patterns = [
-            r'```json\s*(.*?)\s*```',
-            r'```\s*(.*?)\s*```',
-            r'\{[^{}]*\}',
-        ]
+        # Build result with fallbacks
+        condition_str = data.get("MARKET_CONDITION", "uncertain").lower()
+        try:
+            condition = MarketCondition(condition_str)
+        except ValueError:
+            condition = MarketCondition.UNCERTAIN
         
-        for pattern in patterns:
-            match = re.search(pattern, text, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group(1) if '```' in pattern else match.group(0))
-                except json.JSONDecodeError:
-                    continue
+        signal_str = data.get("SIGNAL", "hold").lower()
+        try:
+            signal = SignalType(signal_str)
+        except ValueError:
+            signal = SignalType.HOLD
         
-        return None
+        # Flatten insights
+        all_insights = []
+        for category in insights.values():
+            all_insights.extend(category)
+        
+        return IntelligenceResult(
+            symbol=symbol,
+            timestamp=datetime.utcnow(),
+            condition=condition,
+            signal=signal,
+            confidence=float(data.get("CONFIDENCE", 0.5)),
+            reasoning=data.get("REASONING", response.text[:200]),
+            key_factors=data.get("KEY_FACTORS", []),
+            news_insights=insights.get("news", []),
+            sentiment_insights=insights.get("sentiment", []),
+            economic_insights=insights.get("economic", []),
+            sources=list(set(sources))[:10],
+            recommended_action=data.get("RECOMMENDED_ACTION"),
+            risk_factors=data.get("RISK_FACTORS", []),
+        )
+    
+    async def quick_scan(self, symbol: str) -> Dict[str, Any]:
+        """Quick market scan for immediate decision."""
+        query = IntelligenceQuery(
+            symbol=symbol,
+            include_news=True,
+            include_sentiment=False,
+            include_economic=False,
+            include_contrarian=False,
+            depth="quick",
+        )
+        result = await self.gather_intelligence(query)
+        return result.to_dict()
+    
+    async def full_analysis(self, symbol: str) -> Dict[str, Any]:
+        """Full market analysis for major decisions."""
+        query = IntelligenceQuery(
+            symbol=symbol,
+            include_news=True,
+            include_sentiment=True,
+            include_economic=True,
+            include_contrarian=True,
+            depth="thorough",
+        )
+        result = await self.gather_intelligence(query)
+        return result.to_dict()
 
 
-# Convenience function
-async def get_market_intelligence(
-    symbols: List[str],
-    timeframe: str = "last 24 hours",
-    api_key: Optional[str] = None,
-) -> IntelligenceResult:
-    """
-    Quick function to get market intelligence.
-    
-    Example:
-        result = await get_market_intelligence(["XAUUSD"], "last 6 hours")
-        print(result.market_summary)
-    """
-    config = GeminiConfig(api_key=api_key) if api_key else None
-    intelligence = GeminiIntelligence(config)
-    
-    query = IntelligenceQuery(
-        symbols=symbols,
-        timeframe=timeframe,
-    )
-    
-    return await intelligence.gather_intelligence(query)
+# ══════════════════════════════════════════════════════════════════════════════
+#                           SYNCHRONOUS WRAPPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _run_async(coro):
+    """Run async function synchronously."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
+_intelligence: Optional[GeminiIntelligence] = None
+
+
+def get_intelligence() -> GeminiIntelligence:
+    """Get or create intelligence instance."""
+    global _intelligence
+    if _intelligence is None:
+        _intelligence = GeminiIntelligence()
+    return _intelligence
+
+
+def gather_intelligence_sync(
+    symbol: str = "XAUUSD",
+    depth: str = "medium",
+) -> Dict[str, Any]:
+    """Synchronous wrapper for gather_intelligence."""
+    intel = get_intelligence()
+    query = IntelligenceQuery(symbol=symbol, depth=depth)
+    result = _run_async(intel.gather_intelligence(query))
+    return result.to_dict()
+
+
+def quick_scan_sync(symbol: str = "XAUUSD") -> Dict[str, Any]:
+    """Quick market scan."""
+    intel = get_intelligence()
+    return _run_async(intel.quick_scan(symbol))
+
+
+def full_analysis_sync(symbol: str = "XAUUSD") -> Dict[str, Any]:
+    """Full market analysis."""
+    intel = get_intelligence()
+    return _run_async(intel.full_analysis(symbol))

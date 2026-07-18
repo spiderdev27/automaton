@@ -1,455 +1,330 @@
 """
-Gemini API Client with Web Search Grounding
+Gemini Client with Web Search Grounding
 
-This module provides a client for Google's Gemini API with:
-- Web search grounding for real-time information
-- Function calling for trading operations
-- Structured output for reliable parsing
-- Cost optimization through intelligent caching
+Uses Google's Gemini API with web search capability for:
+- Real-time news analysis
+- Market sentiment scanning
+- Deep research on trading topics
+- Economic calendar checking
+
+Requires: GOOGLE_API_KEY or GOOGLE_CLOUD_PROJECT environment variable
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from enum import Enum
-from typing import List, Dict, Optional, Any, Callable
-import asyncio
-import hashlib
-import json
+from __future__ import annotations
+
 import os
-
-try:
-    from google import genai
-    from google.genai import types
-    HAS_GEMINI = True
-except ImportError:
-    HAS_GEMINI = False
-
-
-class GeminiModel(Enum):
-    """Available Gemini models with cost/capability tradeoffs."""
-    # Flash models - fast and cheap
-    FLASH_LITE = "gemini-2.5-flash-lite"      # Cheapest: $0.10/1M input
-    FLASH = "gemini-2.5-flash"                 # Fast: $0.30/1M input
-    FLASH_3 = "gemini-3-flash"                 # Latest flash
-    
-    # Pro models - more capable
-    PRO = "gemini-2.5-pro"                     # Capable: $1.25/1M input
-    PRO_3 = "gemini-3.1-pro"                   # Latest pro: $2.00/1M input
-    
-    # Preview models
-    FLASH_3_5 = "gemini-3.5-flash"             # Newest
+import json
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+from functools import lru_cache
 
 
 @dataclass
 class GeminiConfig:
     """Configuration for Gemini client."""
     api_key: Optional[str] = None
-    project_id: Optional[str] = None  # For Vertex AI
-    
-    # Model selection
-    default_model: GeminiModel = GeminiModel.FLASH
-    reasoning_model: GeminiModel = GeminiModel.PRO
-    
-    # Features
-    enable_grounding: bool = True
-    enable_function_calling: bool = True
-    
-    # Cost optimization
-    cache_ttl_seconds: int = 300  # 5 minute cache
-    max_retries: int = 3
-    rate_limit_rpm: int = 10  # Free tier limit
-    
-    # Safety
-    temperature: float = 0.1  # Low for consistency
-    max_output_tokens: int = 2048
+    model: str = "gemini-2.0-flash"  # Fast, cheap, good
+    pro_model: str = "gemini-2.0-pro"  # For deep reasoning
+    temperature: float = 0.7
+    max_tokens: int = 4096
+    enable_search: bool = True
     
     @classmethod
     def from_env(cls) -> "GeminiConfig":
-        """Create config from environment variables."""
         return cls(
-            api_key=os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"),
-            project_id=os.getenv("GOOGLE_CLOUD_PROJECT"),
+            api_key=os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"),
         )
 
 
 @dataclass
 class SearchResult:
-    """A single search result from grounding."""
+    """A search result from grounding."""
     title: str
     url: str
     snippet: str
-    domain: str = ""
-    
-    @classmethod
-    def from_grounding_chunk(cls, chunk: Dict) -> "SearchResult":
-        """Create from Gemini grounding chunk."""
-        web = chunk.get("web", {})
-        return cls(
-            title=web.get("title", ""),
-            url=web.get("uri", ""),
-            snippet=chunk.get("text", ""),
-            domain=web.get("domain", ""),
-        )
 
 
 @dataclass
 class GroundedResponse:
-    """Response from Gemini with grounding metadata."""
+    """Response with grounding sources."""
     text: str
-    model: str
-    grounded: bool = False
-    
-    # Search data
-    search_queries: List[str] = field(default_factory=list)
     sources: List[SearchResult] = field(default_factory=list)
-    
-    # Metadata
-    timestamp: datetime = field(default_factory=datetime.utcnow)
-    cached: bool = False
-    tokens_used: int = 0
-    
-    # Confidence
-    confidence: float = 0.0
-    
-    def get_source_urls(self) -> List[str]:
-        """Get list of source URLs."""
-        return [s.url for s in self.sources]
-    
-    def to_dict(self) -> Dict:
-        """Convert to dictionary."""
-        return {
-            "text": self.text,
-            "model": self.model,
-            "grounded": self.grounded,
-            "sources": [{"title": s.title, "url": s.url} for s in self.sources],
-            "search_queries": self.search_queries,
-            "timestamp": self.timestamp.isoformat(),
-        }
+    search_queries: List[str] = field(default_factory=list)
+    model: str = ""
+    usage: Dict[str, int] = field(default_factory=dict)
 
 
 class GeminiClient:
     """
-    Gemini API client optimized for trading intelligence.
+    Client for Gemini API with web search grounding.
     
-    Features:
-    - Web search grounding for real-time news
-    - Function calling for trading actions
-    - Response caching for cost optimization
-    - Rate limiting for free tier compliance
+    Usage:
+        client = GeminiClient()
+        response = await client.generate(
+            "What's happening with gold prices today?",
+            enable_search=True
+        )
+        print(response.text)
+        for source in response.sources:
+            print(f"- {source.title}: {source.url}")
     """
     
     def __init__(self, config: Optional[GeminiConfig] = None):
         self.config = config or GeminiConfig.from_env()
+        self._client = None
+        self._rate_limit_reset = 0
+        self._requests_this_minute = 0
         
-        if not HAS_GEMINI:
-            raise ImportError(
-                "google-genai not installed. "
-                "Run: pip install google-genai"
-            )
-        
-        if not self.config.api_key:
-            raise ValueError(
-                "Gemini API key required. Set GOOGLE_API_KEY or GEMINI_API_KEY"
-            )
-        
-        # Initialize client
-        self.client = genai.Client(api_key=self.config.api_key)
-        
-        # Cache for responses
-        self._cache: Dict[str, GroundedResponse] = {}
-        self._cache_timestamps: Dict[str, datetime] = {}
-        
-        # Rate limiting
-        self._request_times: List[datetime] = []
-        self._rate_limit_lock = asyncio.Lock()
-        
-        # Registered tools for function calling
-        self._tools: Dict[str, Callable] = {}
+    def _ensure_client(self):
+        """Initialize the Gemini client lazily."""
+        if self._client is None:
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=self.config.api_key)
+                self._client = genai
+            except ImportError:
+                raise ImportError(
+                    "google-generativeai not installed. "
+                    "Install with: pip install google-generativeai"
+                )
     
-    def register_tool(self, name: str, func: Callable, description: str, parameters: Dict):
-        """Register a function for function calling."""
-        self._tools[name] = {
-            "function": func,
-            "declaration": types.FunctionDeclaration(
-                name=name,
-                description=description,
-                parameters=parameters,
-            )
-        }
-    
-    async def _wait_for_rate_limit(self):
-        """Ensure we don't exceed rate limits."""
-        async with self._rate_limit_lock:
-            now = datetime.utcnow()
-            minute_ago = now - timedelta(minutes=1)
-            
-            # Remove old timestamps
-            self._request_times = [
-                t for t in self._request_times if t > minute_ago
-            ]
-            
-            if len(self._request_times) >= self.config.rate_limit_rpm:
-                # Wait until oldest request expires
-                sleep_time = (self._request_times[0] - minute_ago).total_seconds()
-                if sleep_time > 0:
-                    await asyncio.sleep(sleep_time + 0.1)
-            
-            self._request_times.append(now)
-    
-    def _get_cache_key(self, prompt: str, model: str, grounded: bool) -> str:
-        """Generate cache key for request."""
-        key_data = f"{prompt}:{model}:{grounded}"
-        return hashlib.md5(key_data.encode()).hexdigest()
-    
-    def _check_cache(self, cache_key: str) -> Optional[GroundedResponse]:
-        """Check if we have a valid cached response."""
-        if cache_key not in self._cache:
-            return None
+    def _rate_limit(self):
+        """Simple rate limiting (15 RPM for free tier)."""
+        now = time.time()
         
-        timestamp = self._cache_timestamps.get(cache_key)
-        if not timestamp:
-            return None
+        if now > self._rate_limit_reset:
+            self._rate_limit_reset = now + 60
+            self._requests_this_minute = 0
         
-        if datetime.utcnow() - timestamp > timedelta(seconds=self.config.cache_ttl_seconds):
-            del self._cache[cache_key]
-            del self._cache_timestamps[cache_key]
-            return None
+        self._requests_this_minute += 1
         
-        response = self._cache[cache_key]
-        response.cached = True
-        return response
+        if self._requests_this_minute > 14:
+            sleep_time = self._rate_limit_reset - now
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+                self._rate_limit_reset = time.time() + 60
+                self._requests_this_minute = 1
     
     async def generate(
         self,
         prompt: str,
-        model: Optional[GeminiModel] = None,
-        grounded: bool = True,
-        use_cache: bool = True,
         system_instruction: Optional[str] = None,
+        enable_search: bool = True,
+        use_pro: bool = False,
     ) -> GroundedResponse:
         """
-        Generate a response from Gemini.
+        Generate a response, optionally with web search grounding.
         
         Args:
-            prompt: The input prompt
-            model: Which model to use (default: config.default_model)
-            grounded: Whether to use web search grounding
-            use_cache: Whether to use response caching
-            system_instruction: Optional system prompt
+            prompt: The prompt to send
+            system_instruction: System-level instruction
+            enable_search: Whether to enable web search grounding
+            use_pro: Use Pro model for better reasoning
             
         Returns:
-            GroundedResponse with text and source citations
+            GroundedResponse with text and sources
         """
-        model = model or self.config.default_model
-        model_name = model.value
+        self._ensure_client()
+        self._rate_limit()
         
-        # Check cache
-        if use_cache:
-            cache_key = self._get_cache_key(prompt, model_name, grounded)
-            cached = self._check_cache(cache_key)
-            if cached:
-                return cached
+        model_name = self.config.pro_model if use_pro else self.config.model
         
-        # Rate limiting
-        await self._wait_for_rate_limit()
+        generation_config = {
+            "temperature": self.config.temperature,
+            "max_output_tokens": self.config.max_tokens,
+        }
         
-        # Build tools
+        # Build tools list
         tools = []
-        if grounded and self.config.enable_grounding:
-            tools.append(types.Tool(google_search=types.GoogleSearch()))
+        if enable_search and self.config.enable_search:
+            tools.append("google_search_retrieval")
         
-        # Generate
         try:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    tools=tools if tools else None,
-                    temperature=self.config.temperature,
-                    max_output_tokens=self.config.max_output_tokens,
-                    system_instruction=system_instruction,
-                )
+            model = self._client.GenerativeModel(
+                model_name=model_name,
+                generation_config=generation_config,
+                system_instruction=system_instruction,
+                tools=tools if tools else None,
             )
             
-            result = self._parse_response(response, model_name)
+            response = model.generate_content(prompt)
             
-            # Cache result
-            if use_cache:
-                self._cache[cache_key] = result
-                self._cache_timestamps[cache_key] = datetime.utcnow()
+            # Extract grounding metadata
+            sources = []
+            search_queries = []
             
-            return result
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'grounding_metadata'):
+                    gm = candidate.grounding_metadata
+                    
+                    # Extract search queries
+                    if hasattr(gm, 'web_search_queries'):
+                        search_queries = list(gm.web_search_queries)
+                    
+                    # Extract sources
+                    if hasattr(gm, 'grounding_chunks'):
+                        for chunk in gm.grounding_chunks:
+                            if hasattr(chunk, 'web'):
+                                sources.append(SearchResult(
+                                    title=chunk.web.title or "",
+                                    url=chunk.web.uri or "",
+                                    snippet="",
+                                ))
+            
+            # Extract usage
+            usage = {}
+            if hasattr(response, 'usage_metadata'):
+                um = response.usage_metadata
+                usage = {
+                    "prompt_tokens": getattr(um, 'prompt_token_count', 0),
+                    "completion_tokens": getattr(um, 'candidates_token_count', 0),
+                    "total_tokens": getattr(um, 'total_token_count', 0),
+                }
+            
+            return GroundedResponse(
+                text=response.text,
+                sources=sources,
+                search_queries=search_queries,
+                model=model_name,
+                usage=usage,
+            )
             
         except Exception as e:
-            # Return error response
             return GroundedResponse(
                 text=f"Error: {str(e)}",
                 model=model_name,
-                grounded=False,
             )
-    
-    def _parse_response(self, response: Any, model: str) -> GroundedResponse:
-        """Parse Gemini response into GroundedResponse."""
-        text = ""
-        sources = []
-        search_queries = []
-        grounded = False
-        
-        # Extract text
-        if hasattr(response, "text"):
-            text = response.text
-        elif hasattr(response, "candidates") and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, "content") and candidate.content.parts:
-                text = candidate.content.parts[0].text
-        
-        # Extract grounding metadata
-        if hasattr(response, "candidates") and response.candidates:
-            candidate = response.candidates[0]
-            
-            if hasattr(candidate, "grounding_metadata"):
-                metadata = candidate.grounding_metadata
-                grounded = True
-                
-                # Search queries
-                if hasattr(metadata, "web_search_queries"):
-                    search_queries = list(metadata.web_search_queries or [])
-                
-                # Grounding chunks (sources)
-                if hasattr(metadata, "grounding_chunks"):
-                    for chunk in (metadata.grounding_chunks or []):
-                        sources.append(SearchResult.from_grounding_chunk(
-                            chunk if isinstance(chunk, dict) else {}
-                        ))
-        
-        # Token usage
-        tokens = 0
-        if hasattr(response, "usage_metadata"):
-            tokens = getattr(response.usage_metadata, "total_token_count", 0)
-        
-        return GroundedResponse(
-            text=text,
-            model=model,
-            grounded=grounded,
-            search_queries=search_queries,
-            sources=sources,
-            tokens_used=tokens,
-        )
     
     async def analyze_news(
         self,
-        query: str,
-        symbols: List[str],
-        timeframe: str = "last 24 hours",
+        topic: str,
+        symbols: List[str] = None,
     ) -> GroundedResponse:
         """
-        Analyze recent news for trading signals.
+        Analyze current news for a topic.
         
-        Uses web search grounding to get real-time information.
+        Args:
+            topic: Topic to analyze (e.g., "gold prices", "US economy")
+            symbols: Related trading symbols
+            
+        Returns:
+            News analysis with sources
         """
-        system_prompt = """You are a financial analyst AI specializing in real-time market intelligence.
-Your task is to analyze news and extract actionable trading signals.
+        symbols_str = ", ".join(symbols) if symbols else "financial markets"
+        
+        prompt = f"""Analyze the latest news and developments related to: {topic}
 
-For each piece of news, determine:
-1. SENTIMENT: bullish, bearish, or neutral
-2. IMPACT: high, medium, or low
-3. TIMEFRAME: immediate (minutes), short-term (hours), medium-term (days)
-4. CONFIDENCE: 0-100%
-5. REASONING: Brief explanation
+Focus on:
+1. Most recent and relevant news (last 24 hours preferred)
+2. Impact on {symbols_str}
+3. Market sentiment (bullish/bearish/neutral)
+4. Key data points or events
+5. Potential trading implications
 
-Focus on facts that could move prices. Ignore speculation without substance."""
-
-        prompt = f"""Search for and analyze the latest news about {', '.join(symbols)} from the {timeframe}.
-
-Query: {query}
-
-Return a JSON object with this structure:
-{{
-    "news_items": [
-        {{
-            "headline": "...",
-            "source": "...",
-            "sentiment": "bullish|bearish|neutral",
-            "impact": "high|medium|low",
-            "timeframe": "immediate|short-term|medium-term",
-            "confidence": 0-100,
-            "affected_symbols": ["..."],
-            "reasoning": "..."
-        }}
-    ],
-    "overall_sentiment": "bullish|bearish|neutral",
-    "key_events": ["..."],
-    "risk_factors": ["..."]
-}}"""
-
+Provide a structured analysis with:
+- HEADLINE: One-line summary
+- SENTIMENT: bullish/bearish/neutral with confidence %
+- KEY_POINTS: Bullet list of important facts
+- IMPACT: Expected market impact
+- TRADING_IMPLICATION: What this means for trading"""
+        
         return await self.generate(
-            prompt=prompt,
-            model=GeminiModel.FLASH,  # Fast for news
-            grounded=True,
-            system_instruction=system_prompt,
+            prompt,
+            system_instruction="You are a financial news analyst. Be factual, cite sources, and provide actionable insights.",
+            enable_search=True,
         )
     
     async def deep_research(
         self,
-        topic: str,
-        context: Optional[str] = None,
+        question: str,
     ) -> GroundedResponse:
         """
-        Perform deep research on a topic.
+        Perform deep research on a topic using Pro model.
         
-        Uses the Pro model for better reasoning.
+        For complex questions requiring multi-hop reasoning.
         """
-        system_prompt = """You are a senior financial research analyst with 20+ years of experience.
-Conduct thorough research and provide actionable insights.
-Always cite your sources and distinguish between facts and analysis."""
+        prompt = f"""Research this question thoroughly: {question}
 
-        prompt = f"""Research this topic thoroughly: {topic}
-
-{f'Context: {context}' if context else ''}
-
-Provide:
-1. Key findings with source citations
-2. Historical precedents if relevant
-3. Potential market implications
-4. Contrarian viewpoints
-5. What the consensus might be missing"""
-
+Use web search to gather information and provide:
+1. Direct answer
+2. Supporting evidence from multiple sources
+3. Any conflicting information
+4. Confidence level in your conclusion
+5. What additional information would help"""
+        
         return await self.generate(
-            prompt=prompt,
-            model=GeminiModel.PRO,  # Better reasoning
-            grounded=True,
-            system_instruction=system_prompt,
+            prompt,
+            system_instruction="You are a research analyst. Be thorough, cite sources, acknowledge uncertainty.",
+            enable_search=True,
+            use_pro=True,
         )
     
-    async def get_economic_calendar(self, days_ahead: int = 7) -> GroundedResponse:
-        """Get upcoming economic events."""
-        prompt = f"""Search for the economic calendar for the next {days_ahead} days.
+    async def get_economic_calendar(
+        self,
+        currencies: List[str] = None,
+    ) -> GroundedResponse:
+        """
+        Get upcoming economic events.
+        """
+        currencies = currencies or ["USD", "EUR", "GBP", "JPY"]
+        currencies_str = ", ".join(currencies)
+        
+        prompt = f"""What are the upcoming high-impact economic events for: {currencies_str}?
 
-List all HIGH IMPACT events including:
-- Central bank decisions (Fed, ECB, BoE, BoJ)
-- Employment data (NFP, unemployment)
-- Inflation data (CPI, PPI)
-- GDP releases
-- PMI data
-- Retail sales
-- Housing data
-
-For each event, provide:
-- Date and time (UTC)
+List events for the next 48 hours including:
 - Event name
-- Country/region
-- Previous value
-- Consensus forecast
-- Potential market impact"""
+- Date and time (UTC)
+- Currency affected
+- Expected impact (high/medium/low)
+- Forecast vs previous (if available)
 
+Focus on events that move markets: interest rate decisions, employment data, GDP, inflation, etc."""
+        
         return await self.generate(
-            prompt=prompt,
-            model=GeminiModel.FLASH,
-            grounded=True,
+            prompt,
+            system_instruction="You are an economic calendar assistant. Be precise about times and dates.",
+            enable_search=True,
         )
-    
-    def clear_cache(self):
-        """Clear the response cache."""
-        self._cache.clear()
-        self._cache_timestamps.clear()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#                           SYNCHRONOUS WRAPPERS
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _run_async(coro):
+    """Run async function synchronously."""
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(coro)
+
+
+def analyze_news_sync(
+    topic: str,
+    symbols: List[str] = None,
+) -> GroundedResponse:
+    """Synchronous wrapper for analyze_news."""
+    client = GeminiClient()
+    return _run_async(client.analyze_news(topic, symbols))
+
+
+def deep_research_sync(
+    question: str,
+) -> GroundedResponse:
+    """Synchronous wrapper for deep_research."""
+    client = GeminiClient()
+    return _run_async(client.deep_research(question))
+
+
+def get_economic_calendar_sync(
+    currencies: List[str] = None,
+) -> GroundedResponse:
+    """Synchronous wrapper for get_economic_calendar."""
+    client = GeminiClient()
+    return _run_async(client.get_economic_calendar(currencies))
