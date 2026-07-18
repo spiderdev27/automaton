@@ -124,22 +124,74 @@ GemTrade automatically adjusts behavior based on capital:
 - **Hard circuit breakers** to prevent account wipeout
 - **Stop losses are MANDATORY** - this is what makes high leverage survivable
 
-## Procedural Memory ("Feeling")
+## Adaptive Intelligence ("Feeling" the Market)
 
-GemTrade doesn't just remember trades - it develops **behavioral adjustments**:
+With small capital, GemTrade operates in **SNIPER MODE** - few trades, high accuracy:
+
+### Signal Quality Scoring (Only Trade A+ and A Signals)
 
 ```python
-# Example: After 15 trades in high volatility
-ProceduralMemory(
-    condition="volatility_percentile > 80",
-    adjustment="position_size * 0.5",  # Half size
-    confidence=0.85,
-    outcome_when_applied=+2.3%,
-    outcome_when_ignored=-4.1%
-)
+SignalScore:
+    trend_alignment: 100     # With the trend?
+    multi_timeframe: 90      # Multiple timeframes agree?
+    indicator_confluence: 85 # Multiple indicators agree?
+    key_level: 100           # At support/resistance?
+    volatility_favorable: 70 # Good volatility?
+    session_timing: 100      # London/NY session?
+    news_clear: 100          # No news pending?
+    risk_reward_ratio: 80    # >= 2:1 R:R?
+    ─────────────────────────
+    Total: 825/1100 → Grade: A → TAKE TRADE
 ```
 
-The agent "feels" caution in high volatility without explicit reasoning.
+### Mid-Trade Adaptation (Real-Time "Feeling")
+
+```python
+ActiveTradeManager:
+    # Move to breakeven after 1:1 profit
+    if pnl >= risk_distance:
+        stop_loss = entry_price
+    
+    # Activate trailing stop after 1.5:1
+    if pnl >= risk_distance * 1.5:
+        trailing_stop = True
+    
+    # Take 50% profit at 2:1
+    if pnl >= risk_distance * 2:
+        close_50_percent()
+    
+    # Tighten stop before news
+    if news_in_minutes < 15:
+        move_stop_to_breakeven()
+    
+    # Close on volatility spike
+    if volatility_percentile > 95:
+        close_trade()
+```
+
+### Self-Learning Parameters
+
+```python
+# Parameters ADAPT based on what works:
+after_win:
+    risk_pct += 10% (confidence)
+    if TP hit exactly → TP distance good
+    
+after_loss:
+    risk_pct -= 15% (protection)
+    if stopped after being in profit → need better trailing
+    if stopped quickly → SL too tight, widen next time
+```
+
+### Market Condition Awareness
+
+| Condition | Action |
+|-----------|--------|
+| News in < 30 min | DON'T TRADE |
+| Spread > 90th percentile | DON'T TRADE |
+| Asian session + quiet | DON'T TRADE |
+| High volatility | Reduce size 50% |
+| London/NY overlap | Increase size 20% |
 
 ## GemCode Integration
 
