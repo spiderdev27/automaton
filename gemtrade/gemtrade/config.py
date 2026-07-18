@@ -82,51 +82,62 @@ class LeverageConfig:
     """
     Leverage management configuration.
     
-    CRITICAL: High leverage (1:2000) means 0.05% adverse move = 100% loss.
-    Leverage must be EARNED through consistent profits, not given freely.
+    With ₹5,000 and high leverage, we need to be AGGRESSIVE but SMART:
+    - Use decent leverage to make meaningful profits
+    - Scale leverage with proven performance
+    - But always have stop losses to control actual risk
     """
     
     # Broker maximum (what's available)
     broker_max_leverage: int = 2000
     
     # Our limits per tier (what we allow ourselves)
-    starting_max_leverage: int = 100    # NORMAL tier
-    earned_max_leverage: int = 500      # HIGH tier (must earn this)
-    reduced_leverage: int = 50          # LOW tier
-    critical_leverage: int = 10         # CRITICAL tier
+    starting_max_leverage: int = 200    # NORMAL tier - good starting leverage
+    earned_max_leverage: int = 500      # HIGH tier (earn through 10x growth)
+    reduced_leverage: int = 100         # LOW tier
+    critical_leverage: int = 50         # CRITICAL tier
     
     # Leverage scaling rules
     consecutive_wins_to_increase: int = 5
-    consecutive_losses_to_decrease: int = 2
-    leverage_increase_step: int = 25    # Increase by 25x per step
+    consecutive_losses_to_decrease: int = 3
+    leverage_increase_step: int = 50    # Increase by 50x per step
     leverage_decrease_step: int = 50    # Decrease by 50x per step
 
 
 @dataclass
 class RiskConfig:
-    """Risk management configuration for small capital + high leverage."""
+    """
+    Risk management configuration for small capital (₹5,000) + high leverage.
     
-    # Position limits (can be stricter than constitution, not looser)
-    max_position_pct: float = 3.0       # Start at 3% with small capital
+    AGGRESSIVE BUT SMART:
+    - Higher per-trade risk (5-10%) to make meaningful gains
+    - Circuit breakers to prevent account wipeout
+    - Stop losses are MANDATORY - risk is controlled by stop distance
+    """
+    
+    # Position limits
+    max_position_pct: float = 20.0      # Can use up to 20% per position with leverage
     max_concurrent_positions: int = 2   # Max 2 positions with INR 5,000
-    min_reserve_pct: float = 50.0       # Keep 50% cash always
+    min_reserve_pct: float = 30.0       # Keep 30% cash (more aggressive)
     
-    # Loss limits (CRITICAL with leverage)
-    max_daily_loss_pct: float = 3.0     # 3% of starting equity
-    max_weekly_loss_pct: float = 10.0   # 10% of starting equity
-    max_drawdown_pct: float = 20.0      # Emergency halt at 20%
+    # Loss limits (circuit breakers)
+    max_daily_loss_pct: float = 15.0    # 15% daily = ₹750, then STOP for day
+    max_weekly_loss_pct: float = 25.0   # 25% weekly = ₹1,250, then STOP for week  
+    max_drawdown_pct: float = 40.0      # 40% drawdown = ₹2,000, emergency halt
     
-    # Per-trade risk
-    max_risk_per_trade_pct: float = 2.0  # Never risk more than 2% per trade
+    # Per-trade risk (AGGRESSIVE for small capital growth)
+    max_risk_per_trade_pct: float = 10.0  # Risk up to 10% = ₹500 per trade
+    default_risk_per_trade_pct: float = 5.0  # Default 5% = ₹250 per trade
+    min_risk_per_trade_pct: float = 2.0   # Minimum 2% = ₹100 per trade
     
-    # Stop loss (MANDATORY)
+    # Stop loss (MANDATORY - this controls actual risk)
     default_stop_loss_pct: float = 1.0   # 1% of entry price
-    min_stop_loss_pct: float = 0.5       # Minimum 0.5%
-    max_stop_loss_pct: float = 5.0       # Maximum 5%
+    min_stop_loss_pct: float = 0.3       # Minimum 0.3% (tight stops with leverage)
+    max_stop_loss_pct: float = 3.0       # Maximum 3%
     
     # Circuit breakers
-    consecutive_losses_pause: int = 3    # Pause after 3 losses (tighter for small capital)
-    pause_duration_hours: int = 4
+    consecutive_losses_pause: int = 4    # Pause after 4 losses
+    pause_duration_hours: int = 2        # 2 hour cooldown
     
     # Leverage config
     leverage: LeverageConfig = field(default_factory=LeverageConfig)

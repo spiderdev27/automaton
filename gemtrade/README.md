@@ -89,35 +89,39 @@ gemtrade journal
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## The Constitution
+## The Constitution (Aggressive but Protected)
 
-These rules are **IMMUTABLE** - no agent can modify or bypass them:
+These rules are **IMMUTABLE** - no agent can bypass them:
 
-| Rule | Description |
-|------|-------------|
-| Stop Loss Required | Every trade MUST have a stop loss |
-| Max Position 5% | No single position > 5% of equity |
-| Daily Loss 3% | Halt if daily loss exceeds 3% |
-| Weekly Loss 10% | Halt if weekly loss exceeds 10% |
-| Max Drawdown 20% | Emergency halt if drawdown > 20% |
-| 50% Reserve | Must maintain 50% cash reserve |
-| Max 3 Positions | Maximum 3 concurrent positions |
+| Rule | Limit | With ₹5,000 |
+|------|-------|-------------|
+| **Stop Loss Required** | Every trade | Non-negotiable |
+| **Max Risk/Trade** | 10% | ₹500 max loss per trade |
+| **Max Position** | 25% | ₹1,250 position value |
+| **Max Concurrent** | 2 | Focus beats diversification |
+| **Daily Loss Halt** | 15% | Stop after ₹750 loss/day |
+| **Weekly Loss Halt** | 25% | Stop after ₹1,250 loss/week |
+| **Max Drawdown** | 40% | Emergency at ₹2,000 from peak |
+| **Reserve** | 30% | Keep ₹1,500 as buffer |
+
+**Philosophy**: Be aggressive with individual trades, but have HARD STOPS that prevent wipeout.
 
 ## Survival Tiers (INR)
 
 GemTrade automatically adjusts behavior based on capital:
 
-| Tier | Balance | Max Leverage | Capabilities |
-|------|---------|--------------|--------------|
-| 🟢 HIGH | > ₹50,000 | 1:500 | **Earned** - Full power, 5% positions |
-| 🟢 NORMAL | > ₹5,000 | 1:100 | Starting tier, 3% positions |
-| 🟠 LOW | > ₹1,000 | 1:50 | Reduced risk, 2% positions |
-| 🔴 CRITICAL | > ₹100 | 1:10 | Close-only mode |
-| ⚫ DEAD | ₹0 | N/A | Cannot trade |
+| Tier | Balance | Max Leverage | Risk/Trade | Capabilities |
+|------|---------|--------------|------------|--------------|
+| 🟢 HIGH | > ₹50,000 | 1:500 | 10% (₹5,000) | **Earned** through 10x growth |
+| 🟢 NORMAL | > ₹5,000 | 1:200 | 10% (₹500) | Starting tier - aggressive |
+| 🟠 LOW | > ₹1,000 | 1:100 | 7.5% (₹75) | Reduced, 1 position only |
+| 🔴 CRITICAL | > ₹100 | 1:50 | 0% | Close-only mode |
+| ⚫ DEAD | ₹0 | N/A | N/A | Cannot trade |
 
-**Key principle**: Leverage is EARNED through profitable trading, not given freely.
-With ₹5,000 and 1:2000 leverage available from broker, a 0.05% adverse move = 100% loss.
-We start conservative at 1:100 and increase only with proven track record.
+**Risk Philosophy**: 
+- **Aggressive per-trade risk** (up to 10%) to make meaningful profits
+- **Hard circuit breakers** to prevent account wipeout
+- **Stop losses are MANDATORY** - this is what makes aggression survivable
 
 ## Procedural Memory ("Feeling")
 

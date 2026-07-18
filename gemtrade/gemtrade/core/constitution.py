@@ -32,18 +32,20 @@ class ConstitutionalRule:
 
 # THE CONSTITUTION
 # These rules are IMMUTABLE and cannot be changed by any agent.
-# They form the foundation of the trading system's safety.
+# Designed for AGGRESSIVE small capital trading (₹5,000) with HIGH LEVERAGE.
+# 
+# Philosophy: Allow aggressive per-trade risk, but have HARD STOPS to prevent wipeout.
 
 CONSTITUTION: List[ConstitutionalRule] = [
     # ═══════════════════════════════════════════════════════════════
-    # FIRST LAW: Protect Capital (Highest Priority)
+    # FIRST LAW: Every Trade Has a Stop Loss (Non-Negotiable)
     # ═══════════════════════════════════════════════════════════════
     
     ConstitutionalRule(
         id="LAW_1_STOP_LOSS",
         name="First Law: Stop Loss Required",
         description="Every trade MUST have a stop loss defined before entry. No exceptions. "
-                    "Trading without a stop loss is forbidden.",
+                    "This is the ONLY thing that makes aggressive trading survivable.",
         severity=RuleSeverity.BLOCK,
         check_code="signal.get('stop_loss') is not None and signal['stop_loss'] > 0"
     ),
@@ -51,74 +53,79 @@ CONSTITUTION: List[ConstitutionalRule] = [
     ConstitutionalRule(
         id="LAW_1_MAX_LOSS_PER_TRADE",
         name="First Law: Maximum Loss Per Trade",
-        description="No single trade may risk more than 2% of account equity.",
+        description="No single trade may risk more than 10% of account equity. "
+                    "With ₹5,000 this means max ₹500 risk per trade.",
         severity=RuleSeverity.BLOCK,
-        check_code="signal.get('risk_pct', 100) <= 2.0"
+        check_code="signal.get('risk_pct', 100) <= 10.0"
     ),
     
     # ═══════════════════════════════════════════════════════════════
-    # SECOND LAW: Position Limits
+    # SECOND LAW: Position Limits (Aggressive but Controlled)
     # ═══════════════════════════════════════════════════════════════
     
     ConstitutionalRule(
         id="LAW_2_MAX_POSITION",
         name="Second Law: Position Size Limit",
-        description="No single position may exceed 5% of account equity.",
+        description="No single position may exceed 25% of account equity (with leverage).",
         severity=RuleSeverity.BLOCK,
-        check_code="signal.get('position_pct', 100) <= 5.0"
+        check_code="signal.get('position_pct', 100) <= 25.0"
     ),
     
     ConstitutionalRule(
         id="LAW_2_MAX_CONCURRENT",
         name="Second Law: Concurrent Position Limit",
-        description="Maximum 3 concurrent open positions at any time.",
+        description="Maximum 2 concurrent open positions. Focus beats diversification at small size.",
         severity=RuleSeverity.BLOCK,
-        check_code="state.get('open_position_count', 0) < 3"
+        check_code="state.get('open_position_count', 0) < 2"
     ),
     
     ConstitutionalRule(
         id="LAW_2_RESERVE",
         name="Second Law: Reserve Requirement",
-        description="Must maintain 50% of capital as cash reserve at all times.",
+        description="Must maintain 30% of capital as reserve. Allows 70% deployment.",
         severity=RuleSeverity.BLOCK,
-        check_code="state.get('exposure_pct', 100) <= 50.0"
+        check_code="state.get('exposure_pct', 100) <= 70.0"
     ),
     
     # ═══════════════════════════════════════════════════════════════
-    # THIRD LAW: Loss Limits (Circuit Breakers)
+    # THIRD LAW: Circuit Breakers (Prevents Wipeout)
     # ═══════════════════════════════════════════════════════════════
     
     ConstitutionalRule(
         id="LAW_3_DAILY_LOSS",
         name="Third Law: Daily Loss Limit",
-        description="Halt all trading if daily loss exceeds 3% of starting equity.",
+        description="STOP trading for the day if daily loss exceeds 15%. "
+                    "With ₹5,000 this means stop after losing ₹750 in a day.",
         severity=RuleSeverity.HALT,
-        check_code="abs(state.get('daily_loss_pct', 0)) < 3.0"
+        check_code="abs(state.get('daily_loss_pct', 0)) < 15.0"
     ),
     
     ConstitutionalRule(
         id="LAW_3_WEEKLY_LOSS",
         name="Third Law: Weekly Loss Limit",
-        description="Halt all trading if weekly loss exceeds 10% of starting equity.",
+        description="STOP trading for the week if weekly loss exceeds 25%. "
+                    "With ₹5,000 this means stop after losing ₹1,250 in a week.",
         severity=RuleSeverity.HALT,
-        check_code="abs(state.get('weekly_loss_pct', 0)) < 10.0"
+        check_code="abs(state.get('weekly_loss_pct', 0)) < 25.0"
     ),
     
     ConstitutionalRule(
         id="LAW_3_MAX_DRAWDOWN",
         name="Third Law: Maximum Drawdown",
-        description="Emergency halt if drawdown from peak exceeds 20%. "
-                    "Requires human intervention to resume.",
+        description="EMERGENCY HALT if drawdown exceeds 40%. "
+                    "With ₹5,000 this triggers at ₹2,000 loss from peak. "
+                    "Requires human review to resume - prevents total wipeout.",
         severity=RuleSeverity.HALT,
-        check_code="state.get('drawdown_pct', 0) < 20.0"
+        check_code="state.get('drawdown_pct', 0) < 40.0"
     ),
     
     ConstitutionalRule(
         id="LAW_3_CONSECUTIVE_LOSSES",
         name="Third Law: Consecutive Loss Limit",
-        description="Pause trading for 4 hours after 5 consecutive losses.",
+        description="Pause trading for 2 hours after 4 consecutive losses. "
+                    "Cool down, reassess, don't revenge trade.",
         severity=RuleSeverity.HALT,
-        check_code="state.get('consecutive_losses', 0) < 5"
+        check_code="state.get('consecutive_losses', 0) < 4"
     ),
 ]
 

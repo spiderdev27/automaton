@@ -77,51 +77,51 @@ class TierCapabilities:
 
 TIER_CAPABILITIES: Dict[SurvivalTier, TierCapabilities] = {
     SurvivalTier.HIGH: TierCapabilities(
-        max_position_pct=5.0,
+        max_position_pct=25.0,         # Full position sizing
         can_open_new=True,
         can_add_to_position=True,
-        max_effective_leverage=500,    # Earned through profits
+        max_effective_leverage=500,    # EARNED through 10x capital growth
         analysis_frequency_minutes=15,
         model_tier="quality",
-        max_concurrent_positions=3,
-        position_size_multiplier=1.0,
-        min_stop_loss_pct=0.5
+        max_concurrent_positions=2,
+        position_size_multiplier=1.0,  # Full size
+        min_stop_loss_pct=0.3          # Can use tight stops
     ),
     
     SurvivalTier.NORMAL: TierCapabilities(
-        max_position_pct=3.0,
+        max_position_pct=20.0,         # Aggressive for growth
         can_open_new=True,
         can_add_to_position=True,
-        max_effective_leverage=100,    # Start conservative despite broker offering more
+        max_effective_leverage=200,    # Good leverage to start
         analysis_frequency_minutes=30,
         model_tier="balanced",
         max_concurrent_positions=2,
-        position_size_multiplier=0.5,  # Start at half size
-        min_stop_loss_pct=1.0
+        position_size_multiplier=1.0,  # Full size - no handicap at start
+        min_stop_loss_pct=0.5          # Reasonable stops
     ),
     
     SurvivalTier.LOW: TierCapabilities(
-        max_position_pct=2.0,
+        max_position_pct=15.0,         # Reduced but still meaningful
         can_open_new=True,
-        can_add_to_position=False,
-        max_effective_leverage=50,     # Reduce leverage when losing
+        can_add_to_position=False,     # No adding to losers
+        max_effective_leverage=100,    # Reduce leverage when losing
         analysis_frequency_minutes=60,
         model_tier="fast",
-        max_concurrent_positions=1,
-        position_size_multiplier=0.25,
-        min_stop_loss_pct=2.0
+        max_concurrent_positions=1,    # Focus on one trade
+        position_size_multiplier=0.75, # Slight reduction
+        min_stop_loss_pct=1.0
     ),
     
     SurvivalTier.CRITICAL: TierCapabilities(
-        max_position_pct=1.0,
+        max_position_pct=10.0,
         can_open_new=False,  # CLOSE-ONLY MODE
         can_add_to_position=False,
-        max_effective_leverage=10,     # Minimal leverage
+        max_effective_leverage=50,     # Low leverage
         analysis_frequency_minutes=120,
         model_tier="fast",
         max_concurrent_positions=0,    # Close existing only
         position_size_multiplier=0,
-        min_stop_loss_pct=5.0
+        min_stop_loss_pct=2.0
     ),
     
     SurvivalTier.DEAD: TierCapabilities(
