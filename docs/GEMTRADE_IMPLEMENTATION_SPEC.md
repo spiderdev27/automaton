@@ -1,1575 +1,1301 @@
 # GemTrade: Technical Implementation Specification
 
-**Version**: 0.1.0  
+**Version**: 0.2.0  
 **Status**: Design Document  
-**Based on**: Automaton v0.2.1 Architecture
+**Base**: GemCode v0.4.25 + Automaton Concepts
 
 ---
 
 ## 1. Architecture Overview
 
-### 1.1 Integration with Automaton
+### 1.1 Core Decision: GemCode as Foundation
 
-GemTrade extends Automaton rather than replacing it. Key integration points:
+GemTrade extends **GemCode** (not Automaton) because GemCode provides:
+
+| GemCode Feature | Trading Application |
+|-----------------|---------------------|
+| Agent Mesh (background thread + async) | Trading agents run 24/7 without blocking |
+| Event Bus (`job.report`, `org.report`) | Trading signals, price alerts, execution reports |
+| Self-Healing Loop | Auto-verify trades, auto-fix positions |
+| Tool Synthesis | Create custom indicators from patterns |
+| Codebase Awareness | → **Market Awareness** (structure graph → market structure) |
+| Habits & Triggers | Trading schedules, news event triggers |
+| Delegation Learning | Strategy performance tracking |
+| Fleet Reports | Trade reports persisted for learning |
+
+**What we port from Automaton:**
+
+| Automaton Concept | GemTrade Implementation |
+|-------------------|-------------------------|
+| Survival Tiers | Operating modes based on capital |
+| Constitutional Limits | Immutable risk rules (Overseer) |
+| Financial State | Capital tracking, P&L |
+| Treasury Policy | Risk policy engine |
+| Child Spawning | Strategy instance spawning |
+| Memory System | Trading journal, procedural memory |
+
+### 1.2 Directory Structure
 
 ```
-automaton/
+gemcode/
 ├── src/
-│   ├── agent/
-│   │   ├── loop.ts              # Extended with trading hooks
-│   │   └── policy-engine.ts     # Add trading-specific policies
-│   ├── memory/
-│   │   ├── trading/             # NEW: Trading-specific memory
-│   │   │   ├── trade-journal.ts
-│   │   │   ├── regime-memory.ts
-│   │   │   └── procedural-trading.ts
-│   │   └── ingestion.ts         # Extend with trade processing
-│   ├── trading/                 # NEW: Trading subsystem
-│   │   ├── overseer.ts
-│   │   ├── analyst.ts
-│   │   ├── strategist.ts
-│   │   ├── executor.ts
-│   │   ├── learner.ts
-│   │   ├── exchange/
-│   │   │   ├── connector.ts
-│   │   │   ├── oanda.ts
-│   │   │   └── paper.ts
-│   │   ├── strategies/
-│   │   │   ├── base.ts
-│   │   │   ├── ema-crossover.ts
-│   │   │   └── regime-adaptive.ts
-│   │   ├── indicators/
-│   │   │   ├── ema.ts
-│   │   │   ├── rsi.ts
-│   │   │   └── atr.ts
-│   │   └── risk/
-│   │       ├── position-sizer.ts
-│   │       ├── circuit-breakers.ts
-│   │       └── limits.ts
-│   └── types.ts                 # Extended with trading types
-```
-
-### 1.2 New Database Schema
-
-Extending `src/state/schema.ts`:
-
-```typescript
-// ─── Trading Schema (V10) ────────────────────────────────────────
-
-export const SCHEMA_V10_TRADING = `
--- Market Data Cache
-CREATE TABLE IF NOT EXISTS market_data (
-  id TEXT PRIMARY KEY,
-  symbol TEXT NOT NULL,
-  timeframe TEXT NOT NULL,
-  timestamp TEXT NOT NULL,
-  open REAL NOT NULL,
-  high REAL NOT NULL,
-  low REAL NOT NULL,
-  close REAL NOT NULL,
-  volume REAL,
-  created_at TEXT DEFAULT (datetime('now')),
-  UNIQUE(symbol, timeframe, timestamp)
-);
-
-CREATE INDEX IF NOT EXISTS idx_market_data_symbol_time 
-  ON market_data(symbol, timeframe, timestamp DESC);
-
--- Trade Journal (Episodic Memory for Trading)
-CREATE TABLE IF NOT EXISTS trade_journal (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  symbol TEXT NOT NULL,
-  direction TEXT NOT NULL CHECK (direction IN ('long', 'short')),
-  strategy_name TEXT NOT NULL,
-  
-  -- Entry
-  entry_timestamp TEXT NOT NULL,
-  entry_price REAL NOT NULL,
-  entry_reason_code TEXT NOT NULL,
-  market_regime_at_entry TEXT,
-  
-  -- Exit
-  exit_timestamp TEXT,
-  exit_price REAL,
-  exit_reason_code TEXT,
-  
-  -- Position management
-  position_size REAL NOT NULL,
-  position_value REAL NOT NULL,
-  initial_stop_loss REAL NOT NULL,
-  initial_take_profit REAL,
-  stop_loss_moved INTEGER DEFAULT 0,
-  take_profit_moved INTEGER DEFAULT 0,
-  
-  -- Outcome
-  profit_loss REAL,
-  profit_loss_percent REAL,
-  max_adverse_excursion REAL,
-  max_favorable_excursion REAL,
-  hold_duration_seconds INTEGER,
-  
-  -- Process evaluation
-  followed_rules INTEGER NOT NULL DEFAULT 1,
-  entry_quality_score REAL CHECK (entry_quality_score BETWEEN 0 AND 1),
-  exit_quality_score REAL CHECK (exit_quality_score BETWEEN 0 AND 1),
-  behavioral_flags TEXT DEFAULT '[]',
-  
-  -- Learning
-  lesson_learned TEXT,
-  pattern_identified TEXT,
-  should_have_done TEXT,
-  
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_trade_journal_symbol ON trade_journal(symbol);
-CREATE INDEX IF NOT EXISTS idx_trade_journal_strategy ON trade_journal(strategy_name);
-CREATE INDEX IF NOT EXISTS idx_trade_journal_time ON trade_journal(entry_timestamp DESC);
-
--- Market Regime Memory
-CREATE TABLE IF NOT EXISTS market_regime_memory (
-  id TEXT PRIMARY KEY,
-  symbol TEXT NOT NULL,
-  regime_type TEXT NOT NULL,
-  volatility_percentile REAL,
-  trend_strength REAL,
-  strategy_performance TEXT DEFAULT '{}',
-  trades_in_regime INTEGER DEFAULT 0,
-  win_rate_in_regime REAL,
-  avg_profit_in_regime REAL,
-  started_at TEXT NOT NULL,
-  ended_at TEXT,
-  duration_hours REAL,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_regime_symbol_time 
-  ON market_regime_memory(symbol, started_at DESC);
-
--- Procedural Trading Memory (The "Feeling" System)
-CREATE TABLE IF NOT EXISTS procedural_trading_memory (
-  id TEXT PRIMARY KEY,
-  condition_type TEXT NOT NULL,
-  condition_params TEXT DEFAULT '{}',
-  adjustment_type TEXT NOT NULL,
-  adjustment_magnitude REAL,
-  supporting_trades INTEGER DEFAULT 0,
-  outcome_when_applied REAL,
-  outcome_when_ignored REAL,
-  confidence REAL DEFAULT 0.5,
-  last_validated_at TEXT,
-  enabled INTEGER DEFAULT 1,
-  created_at TEXT DEFAULT (datetime('now')),
-  updated_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_procedural_condition 
-  ON procedural_trading_memory(condition_type, enabled);
-
--- Trading Error Patterns
-CREATE TABLE IF NOT EXISTS trading_error_patterns (
-  id TEXT PRIMARY KEY,
-  error_type TEXT NOT NULL,
-  error_context TEXT DEFAULT '{}',
-  occurrence_count INTEGER DEFAULT 1,
-  total_loss_from_error REAL DEFAULT 0,
-  early_warning_signs TEXT DEFAULT '[]',
-  prevention_rule TEXT,
-  prevention_effective INTEGER DEFAULT 0,
-  first_occurred_at TEXT NOT NULL,
-  last_occurred_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_error_type ON trading_error_patterns(error_type);
-
--- Trading State
-CREATE TABLE IF NOT EXISTS trading_state (
-  id TEXT PRIMARY KEY DEFAULT 'singleton',
-  is_trading_enabled INTEGER DEFAULT 0,
-  current_regime TEXT,
-  daily_pnl_cents INTEGER DEFAULT 0,
-  weekly_pnl_cents INTEGER DEFAULT 0,
-  current_drawdown_percent REAL DEFAULT 0,
-  trades_today INTEGER DEFAULT 0,
-  consecutive_losses INTEGER DEFAULT 0,
-  last_trade_at TEXT,
-  circuit_breaker_active TEXT,
-  circuit_breaker_until TEXT,
-  updated_at TEXT DEFAULT (datetime('now'))
-);
-
--- Open Positions
-CREATE TABLE IF NOT EXISTS open_positions (
-  id TEXT PRIMARY KEY,
-  symbol TEXT NOT NULL,
-  direction TEXT NOT NULL,
-  entry_price REAL NOT NULL,
-  current_price REAL,
-  position_size REAL NOT NULL,
-  unrealized_pnl REAL DEFAULT 0,
-  stop_loss REAL NOT NULL,
-  take_profit REAL,
-  opened_at TEXT NOT NULL,
-  updated_at TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_open_positions_symbol ON open_positions(symbol);
-`;
+│   └── gemcode/
+│       ├── trading/                    # NEW: Trading Extension
+│       │   ├── __init__.py
+│       │   ├── config.py              # TradingConfig, risk limits
+│       │   ├── constitution.py        # Immutable risk rules
+│       │   ├── survival.py            # Survival tiers, operating modes
+│       │   │
+│       │   ├── agents/                # Trading-specific org members
+│       │   │   ├── __init__.py
+│       │   │   ├── overseer.py        # Constitutional enforcement
+│       │   │   ├── analyst.py         # Market analysis
+│       │   │   ├── strategist.py      # Decision making
+│       │   │   ├── executor.py        # Order execution
+│       │   │   └── learner.py         # Post-trade analysis
+│       │   │
+│       │   ├── exchange/              # Exchange connectors
+│       │   │   ├── __init__.py
+│       │   │   ├── base.py            # ExchangeConnector interface
+│       │   │   ├── paper.py           # Paper trading
+│       │   │   └── oanda.py           # OANDA for XAU/USD
+│       │   │
+│       │   ├── strategies/            # Trading strategies
+│       │   │   ├── __init__.py
+│       │   │   ├── base.py            # Strategy interface
+│       │   │   ├── ema_crossover.py   # Simple starting strategy
+│       │   │   └── registry.py        # Strategy registry
+│       │   │
+│       │   ├── indicators/            # Technical indicators
+│       │   │   ├── __init__.py
+│       │   │   ├── ema.py
+│       │   │   ├── rsi.py
+│       │   │   ├── atr.py
+│       │   │   └── macd.py
+│       │   │
+│       │   ├── memory/                # Trading-specific memory
+│       │   │   ├── __init__.py
+│       │   │   ├── trade_journal.py   # Episodic: trade records
+│       │   │   ├── regime_memory.py   # Semantic: market regimes
+│       │   │   ├── procedural.py      # "Feeling": behavioral adjustments
+│       │   │   └── error_patterns.py  # Mistakes to avoid
+│       │   │
+│       │   └── tools/                 # Trading tools for agents
+│       │       ├── __init__.py
+│       │       ├── market_data.py     # Price feeds, candles
+│       │       ├── order_tools.py     # Place/modify/cancel orders
+│       │       ├── position_tools.py  # Position management
+│       │       ├── analysis_tools.py  # Indicator calculations
+│       │       └── risk_tools.py      # Position sizing, risk calc
+│       │
+│       ├── tools/
+│       │   └── trading_tools.py       # Integration with GemCode tools
+│       │
+│       └── agent_mesh.py              # Extended with trading awareness
+│
+└── .gemcode/
+    └── trading/                       # Trading state files
+        ├── config.json                # Trading configuration
+        ├── state.json                 # Current trading state
+        ├── constitution.json          # Immutable risk rules
+        ├── trade_journal.jsonl        # Trade history
+        ├── regime_memory.json         # Market regime memory
+        ├── procedural_memory.json     # Behavioral adjustments
+        ├── error_patterns.json        # Mistakes learned
+        └── strategies/                # Strategy configs
 ```
 
 ---
 
-## 2. Type Definitions
+## 2. GemCode Integration Points
 
-Adding to `src/types.ts`:
+### 2.1 Agent Mesh Extension
 
-```typescript
-// ─── Trading Types ───────────────────────────────────────────────
+The Agent Mesh is the perfect foundation for trading agents. We extend it to:
 
-export type MarketRegime = 
-  | 'trending_up' 
-  | 'trending_down' 
-  | 'ranging' 
-  | 'volatile' 
-  | 'quiet'
-  | 'unknown';
+```python
+# gemcode/src/gemcode/trading/mesh_integration.py
 
-export type TradeDirection = 'long' | 'short';
+from gemcode.agent_mesh import AgentMesh, AgentJob
+from gemcode.event_bus import get_bus
+from gemcode.trading.constitution import TradingConstitution
+from gemcode.trading.survival import SurvivalManager
 
-export type TradeStatus = 'pending' | 'open' | 'closed' | 'cancelled';
+class TradingMesh:
+    """Extends AgentMesh with trading-specific coordination."""
+    
+    def __init__(self, cfg, trading_config):
+        self.mesh = get_mesh(cfg)  # Reuse existing mesh
+        self.bus = get_bus()
+        self.constitution = TradingConstitution(trading_config)
+        self.survival = SurvivalManager(trading_config)
+        
+        # Subscribe to trading-specific events
+        self.bus.subscribe("trade.signal", "trading", self._handle_trade_signal)
+        self.bus.subscribe("trade.executed", "trading", self._handle_trade_executed)
+        self.bus.subscribe("market.regime_change", "trading", self._handle_regime_change)
+        self.bus.subscribe("price.alert", "trading", self._handle_price_alert)
+        
+    async def _handle_trade_signal(self, msg):
+        """Process trade signal from Strategist."""
+        signal = msg.payload
+        
+        # Constitutional check (cannot be bypassed)
+        validation = self.constitution.validate_signal(signal)
+        if validation.rejected:
+            self.bus.publish("trade.rejected", {
+                "signal": signal,
+                "reason": validation.reason,
+                "rule": validation.rule
+            })
+            return
+            
+        # Check survival tier
+        if not self.survival.can_trade():
+            self.bus.publish("trade.rejected", {
+                "signal": signal,
+                "reason": f"Survival tier too low: {self.survival.current_tier}"
+            })
+            return
+            
+        # Forward to Executor
+        job = AgentJob(
+            job_id=f"execute-{signal['id']}",
+            prompt=f"Execute trade signal: {signal}",
+            member_name="executor",
+            priority=1,  # High priority
+            meta={"signal": signal}
+        )
+        self.mesh.enqueue(job)
+```
 
-export type ExitReason = 
-  | 'stop_loss'
-  | 'take_profit'
-  | 'trailing_stop'
-  | 'strategy_signal'
-  | 'time_stop'
-  | 'manual'
-  | 'circuit_breaker'
-  | 'overseer_halt';
+### 2.2 Event Bus Topics for Trading
 
-export type BehavioralFlag =
-  | 'moved_stop'
-  | 'removed_stop'
-  | 'overleveraged'
-  | 'revenge_trade'
-  | 'fomo_entry'
-  | 'early_exit'
-  | 'late_exit'
-  | 'ignored_signal'
-  | 'traded_against_regime';
+Extend GemCode's event bus with trading-specific topics:
 
-export interface OHLCV {
-  timestamp: Date;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume?: number;
+```python
+# Trading-specific event topics
+
+TRADING_TOPICS = {
+    # Price & Market Data
+    "price.tick": "Real-time price update",
+    "price.alert": "Price threshold crossed",
+    "market.regime_change": "Market regime changed",
+    "market.news": "High-impact news event",
+    
+    # Trading Signals & Execution
+    "trade.signal": "New trade signal from Strategist",
+    "trade.validated": "Signal passed Overseer validation",
+    "trade.rejected": "Signal rejected by Overseer",
+    "trade.executed": "Order filled by exchange",
+    "trade.closed": "Position closed",
+    
+    # Risk & Survival
+    "risk.limit_warning": "Approaching risk limit",
+    "risk.circuit_breaker": "Circuit breaker activated",
+    "survival.tier_change": "Survival tier changed",
+    
+    # Learning
+    "learn.trade_complete": "Trade completed, ready for analysis",
+    "learn.pattern_detected": "New error/success pattern detected",
+    "learn.procedural_update": "Procedural memory updated"
 }
+```
 
-export interface TradeSignal {
-  symbol: string;
-  direction: TradeDirection;
-  entryPrice: number;
-  stopLoss: number;
-  takeProfit?: number;
-  positionSize: number;
-  strategy: string;
-  confidence: number;
-  reason: string;
-  marketRegime: MarketRegime;
-  timestamp: Date;
+### 2.3 Trading Habits (Scheduled Tasks)
+
+Use GemCode's habit system for trading schedules:
+
+```python
+# .gemcode/habits.json (trading entries)
+
+{
+  "habits": [
+    {
+      "name": "market-scan",
+      "agent": "analyst",
+      "prompt": "Scan XAU/USD for trade setups. Report regime and any signals.",
+      "every_minutes": 15,
+      "enabled": true
+    },
+    {
+      "name": "position-check",
+      "agent": "executor",
+      "prompt": "Check all open positions. Update stops if needed.",
+      "every_minutes": 5,
+      "enabled": true
+    },
+    {
+      "name": "daily-review",
+      "agent": "learner",
+      "prompt": "Review all trades from today. Update procedural memory.",
+      "daily_at": "22:00",
+      "enabled": true
+    },
+    {
+      "name": "risk-audit",
+      "agent": "overseer",
+      "prompt": "Audit current risk exposure. Check all limits.",
+      "every_minutes": 30,
+      "enabled": true
+    }
+  ]
 }
+```
 
-export interface Trade {
-  id: string;
-  symbol: string;
-  direction: TradeDirection;
-  status: TradeStatus;
-  strategy: string;
-  
-  // Entry
-  entryPrice: number;
-  entryTime: Date;
-  entryReason: string;
-  
-  // Position
-  positionSize: number;
-  positionValue: number;
-  stopLoss: number;
-  takeProfit?: number;
-  
-  // Exit
-  exitPrice?: number;
-  exitTime?: Date;
-  exitReason?: ExitReason;
-  
-  // Outcome
-  profitLoss?: number;
-  profitLossPercent?: number;
-  maxAdverseExcursion?: number;
-  maxFavorableExcursion?: number;
-  
-  // Process Evaluation
-  followedRules: boolean;
-  entryQualityScore?: number;
-  exitQualityScore?: number;
-  behavioralFlags: BehavioralFlag[];
-}
+### 2.4 Trading Triggers (Event-Driven)
 
-export interface TradingConfig {
-  // Symbols
-  allowedSymbols: string[];
-  defaultSymbol: string;
-  
-  // Risk Management (Constitutional - cannot be modified by agents)
-  maxPositionSizePercent: number;
-  maxDailyLossPercent: number;
-  maxWeeklyLossPercent: number;
-  maxDrawdownPercent: number;
-  maxLeverageMultiple: number;
-  maxConcurrentPositions: number;
-  requiredMinimumReserve: number;
-  
-  // Dynamic (can be adjusted by Strategist within bounds)
-  positionSizeRange: [number, number];
-  stopLossRange: [number, number];
-  takeProfitRange: [number, number];
-  
-  // Circuit Breakers
-  consecutiveLossesForPause: number;
-  pauseDurationMinutes: number;
-  drawdownForSizeReduction: number;
-  
-  // Exchange
-  exchangeType: 'paper' | 'oanda' | 'alpaca';
-  exchangeCredentials?: Record<string, string>;
-}
+Use GemCode's trigger system for market events:
 
-export const DEFAULT_TRADING_CONFIG: TradingConfig = {
-  allowedSymbols: ['XAU/USD'],
-  defaultSymbol: 'XAU/USD',
-  
-  maxPositionSizePercent: 5,
-  maxDailyLossPercent: 3,
-  maxWeeklyLossPercent: 10,
-  maxDrawdownPercent: 20,
-  maxLeverageMultiple: 10,
-  maxConcurrentPositions: 3,
-  requiredMinimumReserve: 0.5,
-  
-  positionSizeRange: [0.5, 5],
-  stopLossRange: [10, 100],
-  takeProfitRange: [20, 500],
-  
-  consecutiveLossesForPause: 5,
-  pauseDurationMinutes: 240,
-  drawdownForSizeReduction: 10,
-  
-  exchangeType: 'paper',
-};
+```python
+# .gemcode/triggers.json (trading entries)
 
-// Procedural Memory for "Feeling"
-export interface TradingProceduralMemory {
-  id: string;
-  conditionType: string;
-  conditionParams: Record<string, unknown>;
-  adjustmentType: string;
-  adjustmentMagnitude: number;
-  supportingTrades: number;
-  outcomeWhenApplied: number;
-  outcomeWhenIgnored: number;
-  confidence: number;
-  enabled: boolean;
-}
-
-// Trading State (singleton)
-export interface TradingState {
-  isTradingEnabled: boolean;
-  currentRegime: MarketRegime;
-  dailyPnlCents: number;
-  weeklyPnlCents: number;
-  currentDrawdownPercent: number;
-  tradesToday: number;
-  consecutiveLosses: number;
-  lastTradeAt: Date | null;
-  circuitBreakerActive: string | null;
-  circuitBreakerUntil: Date | null;
+{
+  "triggers": [
+    {
+      "agent": "overseer",
+      "on_topic": "trade.signal",
+      "when": {},
+      "action": "Validate this trade signal against constitutional limits.",
+      "cooldown_s": 0,
+      "enabled": true
+    },
+    {
+      "agent": "learner",
+      "on_topic": "trade.closed",
+      "when": {},
+      "action": "Analyze this completed trade. Update memory.",
+      "cooldown_s": 10,
+      "enabled": true
+    },
+    {
+      "agent": "strategist",
+      "on_topic": "market.regime_change",
+      "when": {},
+      "action": "Regime changed. Re-evaluate all open positions and pending signals.",
+      "cooldown_s": 60,
+      "enabled": true
+    }
+  ]
 }
 ```
 
 ---
 
-## 3. Core Components
+## 3. Survival System (From Automaton)
 
-### 3.1 Overseer Agent
+### 3.1 Survival Tiers
 
-The Overseer enforces constitutional limits and cannot be overridden.
+Port Automaton's survival concept to GemCode:
 
-```typescript
-// src/trading/overseer.ts
+```python
+# gemcode/src/gemcode/trading/survival.py
 
-import type { TradingConfig, TradingState, TradeSignal, Trade } from '../types.js';
-import { createLogger } from '../observability/logger.js';
+from enum import Enum
+from dataclasses import dataclass
+from typing import Optional
+import time
 
-const logger = createLogger('trading.overseer');
+class SurvivalTier(Enum):
+    """Operating modes based on capital."""
+    DEAD = "dead"           # Cannot trade, must recover
+    CRITICAL = "critical"   # Minimal operations only
+    LOW = "low"             # Reduced position sizes
+    NORMAL = "normal"       # Standard operations
+    HIGH = "high"           # Full capabilities
 
-export class TradingOverseer {
-  private config: TradingConfig;
-  
-  constructor(config: TradingConfig) {
-    this.config = Object.freeze({ ...config }); // Immutable
-  }
-  
-  /**
-   * Validate a trade signal against constitutional limits.
-   * Returns null if approved, or an error message if rejected.
-   */
-  validateSignal(
-    signal: TradeSignal,
-    state: TradingState,
-    accountBalance: number,
-    openPositions: Trade[]
-  ): string | null {
-    // Check if trading is enabled
-    if (!state.isTradingEnabled) {
-      return 'OVERSEER: Trading is disabled';
-    }
-    
-    // Check circuit breakers
-    if (state.circuitBreakerActive && state.circuitBreakerUntil) {
-      if (new Date() < state.circuitBreakerUntil) {
-        return `OVERSEER: Circuit breaker active until ${state.circuitBreakerUntil}`;
-      }
-    }
-    
-    // Check daily loss limit
-    const dailyLossPercent = Math.abs(state.dailyPnlCents) / (accountBalance * 100);
-    if (state.dailyPnlCents < 0 && dailyLossPercent >= this.config.maxDailyLossPercent) {
-      return `OVERSEER: Daily loss limit reached (${dailyLossPercent.toFixed(2)}%)`;
-    }
-    
-    // Check weekly loss limit
-    const weeklyLossPercent = Math.abs(state.weeklyPnlCents) / (accountBalance * 100);
-    if (state.weeklyPnlCents < 0 && weeklyLossPercent >= this.config.maxWeeklyLossPercent) {
-      return `OVERSEER: Weekly loss limit reached (${weeklyLossPercent.toFixed(2)}%)`;
-    }
-    
-    // Check drawdown
-    if (state.currentDrawdownPercent >= this.config.maxDrawdownPercent) {
-      return `OVERSEER: Maximum drawdown reached (${state.currentDrawdownPercent.toFixed(2)}%)`;
-    }
-    
-    // Check position size
-    const positionSizePercent = (signal.positionSize * signal.entryPrice) / accountBalance * 100;
-    if (positionSizePercent > this.config.maxPositionSizePercent) {
-      return `OVERSEER: Position size ${positionSizePercent.toFixed(2)}% exceeds max ${this.config.maxPositionSizePercent}%`;
-    }
-    
-    // Check concurrent positions
-    if (openPositions.length >= this.config.maxConcurrentPositions) {
-      return `OVERSEER: Maximum concurrent positions (${this.config.maxConcurrentPositions}) reached`;
-    }
-    
-    // Check minimum reserve
-    const totalExposure = openPositions.reduce((sum, p) => sum + p.positionValue, 0);
-    const proposedExposure = totalExposure + (signal.positionSize * signal.entryPrice);
-    const reserveRatio = (accountBalance - proposedExposure) / accountBalance;
-    if (reserveRatio < this.config.requiredMinimumReserve) {
-      return `OVERSEER: Trade would violate minimum reserve requirement (${(reserveRatio * 100).toFixed(2)}% < ${this.config.requiredMinimumReserve * 100}%)`;
-    }
-    
-    // Check symbol is allowed
-    if (!this.config.allowedSymbols.includes(signal.symbol)) {
-      return `OVERSEER: Symbol ${signal.symbol} is not in allowed list`;
-    }
-    
-    // Check stop loss is set
-    if (!signal.stopLoss || signal.stopLoss <= 0) {
-      return 'OVERSEER: Stop loss is required for all trades';
-    }
-    
-    logger.info('Trade signal approved by Overseer', {
-      symbol: signal.symbol,
-      direction: signal.direction,
-      positionSize: signal.positionSize,
-    });
-    
-    return null; // Approved
-  }
-  
-  /**
-   * Check if circuit breaker should be activated.
-   */
-  checkCircuitBreakers(state: TradingState): {
-    shouldActivate: boolean;
-    breakerType: string | null;
-    duration: number;
-  } {
-    // Consecutive losses
-    if (state.consecutiveLosses >= this.config.consecutiveLossesForPause) {
-      return {
-        shouldActivate: true,
-        breakerType: 'consecutive_losses',
-        duration: this.config.pauseDurationMinutes * 60 * 1000,
-      };
-    }
-    
-    // Drawdown threshold for size reduction (not full stop)
-    if (state.currentDrawdownPercent >= this.config.drawdownForSizeReduction) {
-      return {
-        shouldActivate: true,
-        breakerType: 'drawdown_warning',
-        duration: 60 * 60 * 1000, // 1 hour
-      };
-    }
-    
-    return { shouldActivate: false, breakerType: null, duration: 0 };
-  }
-  
-  /**
-   * EMERGENCY: Halt all trading immediately.
-   * This can be triggered by any agent but cannot be undone without human intervention.
-   */
-  emergencyHalt(reason: string): void {
-    logger.error('EMERGENCY HALT ACTIVATED', { reason });
-    // This would update the database and potentially alert humans
-    throw new Error(`TRADING HALTED: ${reason}`);
-  }
+SURVIVAL_THRESHOLDS = {
+    SurvivalTier.HIGH: 10000,      # > $100 (in cents)
+    SurvivalTier.NORMAL: 5000,     # > $50
+    SurvivalTier.LOW: 1000,        # > $10
+    SurvivalTier.CRITICAL: 100,    # > $1
+    SurvivalTier.DEAD: 0,          # $0 or negative
 }
+
+TIER_CAPABILITIES = {
+    SurvivalTier.HIGH: {
+        "max_position_pct": 5.0,
+        "can_open_new": True,
+        "can_add_to_position": True,
+        "analysis_depth": "full",
+    },
+    SurvivalTier.NORMAL: {
+        "max_position_pct": 3.0,
+        "can_open_new": True,
+        "can_add_to_position": True,
+        "analysis_depth": "standard",
+    },
+    SurvivalTier.LOW: {
+        "max_position_pct": 1.0,
+        "can_open_new": True,
+        "can_add_to_position": False,
+        "analysis_depth": "minimal",
+    },
+    SurvivalTier.CRITICAL: {
+        "max_position_pct": 0.5,
+        "can_open_new": False,  # Close-only mode
+        "can_add_to_position": False,
+        "analysis_depth": "none",
+    },
+    SurvivalTier.DEAD: {
+        "max_position_pct": 0,
+        "can_open_new": False,
+        "can_add_to_position": False,
+        "analysis_depth": "none",
+    },
+}
+
+@dataclass
+class FinancialState:
+    """Current financial state."""
+    balance_cents: int
+    equity_cents: int
+    unrealized_pnl_cents: int
+    daily_pnl_cents: int
+    weekly_pnl_cents: int
+    drawdown_pct: float
+    last_updated: float
+
+class SurvivalManager:
+    """Manages survival tier based on financial state."""
+    
+    def __init__(self, config):
+        self.config = config
+        self.current_tier = SurvivalTier.NORMAL
+        self.financial_state: Optional[FinancialState] = None
+        
+    def update_state(self, state: FinancialState) -> SurvivalTier:
+        """Update financial state and recalculate tier."""
+        self.financial_state = state
+        
+        # Determine tier from balance
+        new_tier = SurvivalTier.DEAD
+        for tier, threshold in sorted(SURVIVAL_THRESHOLDS.items(), 
+                                       key=lambda x: x[1], reverse=True):
+            if state.balance_cents >= threshold:
+                new_tier = tier
+                break
+                
+        # Downgrade for excessive drawdown
+        if state.drawdown_pct >= self.config.max_drawdown_pct:
+            new_tier = SurvivalTier.CRITICAL
+            
+        # Downgrade for daily loss limit
+        daily_loss_pct = abs(state.daily_pnl_cents) / max(state.balance_cents, 1) * 100
+        if state.daily_pnl_cents < 0 and daily_loss_pct >= self.config.max_daily_loss_pct:
+            new_tier = min(new_tier, SurvivalTier.CRITICAL, key=lambda x: x.value)
+            
+        self.current_tier = new_tier
+        return new_tier
+        
+    def can_trade(self) -> bool:
+        """Check if trading is allowed in current tier."""
+        return TIER_CAPABILITIES[self.current_tier]["can_open_new"]
+        
+    def get_max_position_pct(self) -> float:
+        """Get maximum position size percentage for current tier."""
+        return TIER_CAPABILITIES[self.current_tier]["max_position_pct"]
 ```
 
-### 3.2 Exchange Connector Interface
+### 3.2 Constitution (Immutable Rules)
 
-```typescript
-// src/trading/exchange/connector.ts
+Port Automaton's constitution concept:
 
-import type { OHLCV, Trade, TradeSignal, TradeDirection } from '../../types.js';
+```python
+# gemcode/src/gemcode/trading/constitution.py
 
-export interface OrderResult {
-  orderId: string;
-  status: 'filled' | 'partial' | 'pending' | 'rejected';
-  filledPrice?: number;
-  filledQuantity?: number;
-  commission?: number;
-  message?: string;
-}
+from dataclasses import dataclass
+from typing import Optional, List
+import json
+from pathlib import Path
 
-export interface AccountInfo {
-  balance: number;
-  equity: number;
-  margin: number;
-  freeMargin: number;
-  currency: string;
-}
+@dataclass
+class ConstitutionalRule:
+    """An immutable trading rule."""
+    id: str
+    name: str
+    description: str
+    check: str  # Python expression to evaluate
+    action: str  # What happens if violated
+    severity: str  # "block", "warn", "log"
 
-export interface ExchangeConnector {
-  // Connection
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  isConnected(): boolean;
-  
-  // Account
-  getAccountInfo(): Promise<AccountInfo>;
-  
-  // Market Data
-  getLatestPrice(symbol: string): Promise<number>;
-  getOHLCV(symbol: string, timeframe: string, limit: number): Promise<OHLCV[]>;
-  subscribeToPrice(symbol: string, callback: (price: number) => void): void;
-  unsubscribeFromPrice(symbol: string): void;
-  
-  // Orders
-  placeMarketOrder(
-    symbol: string,
-    direction: TradeDirection,
-    quantity: number,
-    stopLoss: number,
-    takeProfit?: number
-  ): Promise<OrderResult>;
-  
-  placeLimitOrder(
-    symbol: string,
-    direction: TradeDirection,
-    quantity: number,
-    price: number,
-    stopLoss: number,
-    takeProfit?: number
-  ): Promise<OrderResult>;
-  
-  modifyOrder(
-    orderId: string,
-    stopLoss?: number,
-    takeProfit?: number
-  ): Promise<OrderResult>;
-  
-  cancelOrder(orderId: string): Promise<boolean>;
-  
-  closePosition(positionId: string): Promise<OrderResult>;
-  
-  // Positions
-  getOpenPositions(): Promise<Trade[]>;
-  getPosition(positionId: string): Promise<Trade | null>;
-}
-```
+@dataclass 
+class ValidationResult:
+    """Result of constitutional validation."""
+    rejected: bool
+    reason: Optional[str] = None
+    rule: Optional[str] = None
+    warnings: List[str] = None
 
-### 3.3 Paper Trading Connector
+# These rules CANNOT be modified by agents
+CONSTITUTIONAL_RULES = [
+    ConstitutionalRule(
+        id="max_position_size",
+        name="Maximum Position Size",
+        description="No single position may exceed 5% of account",
+        check="signal.position_pct <= 5.0",
+        action="Reject trade signal",
+        severity="block"
+    ),
+    ConstitutionalRule(
+        id="stop_loss_required",
+        name="Stop Loss Required",
+        description="Every trade must have a stop loss",
+        check="signal.stop_loss is not None and signal.stop_loss > 0",
+        action="Reject trade signal",
+        severity="block"
+    ),
+    ConstitutionalRule(
+        id="max_daily_loss",
+        name="Maximum Daily Loss",
+        description="Halt trading if daily loss exceeds 3%",
+        check="state.daily_loss_pct < 3.0",
+        action="Activate circuit breaker",
+        severity="block"
+    ),
+    ConstitutionalRule(
+        id="max_weekly_loss",
+        name="Maximum Weekly Loss",
+        description="Halt trading if weekly loss exceeds 10%",
+        check="state.weekly_loss_pct < 10.0",
+        action="Activate circuit breaker",
+        severity="block"
+    ),
+    ConstitutionalRule(
+        id="max_drawdown",
+        name="Maximum Drawdown",
+        description="Emergency halt if drawdown exceeds 20%",
+        check="state.drawdown_pct < 20.0",
+        action="Emergency halt, alert human",
+        severity="block"
+    ),
+    ConstitutionalRule(
+        id="max_concurrent_positions",
+        name="Maximum Concurrent Positions",
+        description="No more than 3 positions at once",
+        check="state.open_positions <= 3",
+        action="Reject new trade signal",
+        severity="block"
+    ),
+    ConstitutionalRule(
+        id="minimum_reserve",
+        name="Minimum Reserve",
+        description="Must maintain 50% reserve at all times",
+        check="state.exposure_pct <= 50.0",
+        action="Reject new trade signal",
+        severity="block"
+    ),
+]
 
-```typescript
-// src/trading/exchange/paper.ts
-
-import type { 
-  ExchangeConnector, 
-  OrderResult, 
-  AccountInfo 
-} from './connector.js';
-import type { OHLCV, Trade, TradeDirection } from '../../types.js';
-import { ulid } from 'ulid';
-import { createLogger } from '../../observability/logger.js';
-
-const logger = createLogger('trading.paper');
-
-interface PaperPosition {
-  id: string;
-  symbol: string;
-  direction: TradeDirection;
-  entryPrice: number;
-  quantity: number;
-  stopLoss: number;
-  takeProfit?: number;
-  openedAt: Date;
-}
-
-export class PaperTradingConnector implements ExchangeConnector {
-  private connected = false;
-  private balance: number;
-  private positions: Map<string, PaperPosition> = new Map();
-  private priceSubscriptions: Map<string, (price: number) => void> = new Map();
-  private currentPrices: Map<string, number> = new Map();
-  private historicalData: Map<string, OHLCV[]> = new Map();
-  
-  constructor(initialBalance: number = 10000) {
-    this.balance = initialBalance;
-  }
-  
-  async connect(): Promise<void> {
-    this.connected = true;
-    logger.info('Paper trading connected', { balance: this.balance });
-  }
-  
-  async disconnect(): Promise<void> {
-    this.connected = false;
-    this.priceSubscriptions.clear();
-  }
-  
-  isConnected(): boolean {
-    return this.connected;
-  }
-  
-  async getAccountInfo(): Promise<AccountInfo> {
-    const equity = this.calculateEquity();
-    return {
-      balance: this.balance,
-      equity,
-      margin: equity * 0.1, // Simplified
-      freeMargin: equity * 0.9,
-      currency: 'USD',
-    };
-  }
-  
-  async getLatestPrice(symbol: string): Promise<number> {
-    // In production, this would fetch from a real data source
-    // For paper trading, we simulate or use cached data
-    const price = this.currentPrices.get(symbol);
-    if (!price) {
-      throw new Error(`No price data for ${symbol}`);
-    }
-    return price;
-  }
-  
-  async getOHLCV(symbol: string, timeframe: string, limit: number): Promise<OHLCV[]> {
-    // Would fetch from data provider
-    const data = this.historicalData.get(`${symbol}-${timeframe}`) || [];
-    return data.slice(-limit);
-  }
-  
-  subscribeToPrice(symbol: string, callback: (price: number) => void): void {
-    this.priceSubscriptions.set(symbol, callback);
-  }
-  
-  unsubscribeFromPrice(symbol: string): void {
-    this.priceSubscriptions.delete(symbol);
-  }
-  
-  // Method to feed price data (for testing/simulation)
-  feedPrice(symbol: string, price: number): void {
-    this.currentPrices.set(symbol, price);
+class TradingConstitution:
+    """Enforces immutable trading rules. Cannot be modified by agents."""
     
-    // Check stops and limits for open positions
-    for (const [id, pos] of this.positions) {
-      if (pos.symbol !== symbol) continue;
-      
-      if (pos.direction === 'long') {
-        if (price <= pos.stopLoss) {
-          this.closePositionInternal(id, pos.stopLoss, 'stop_loss');
-        } else if (pos.takeProfit && price >= pos.takeProfit) {
-          this.closePositionInternal(id, pos.takeProfit, 'take_profit');
-        }
-      } else {
-        if (price >= pos.stopLoss) {
-          this.closePositionInternal(id, pos.stopLoss, 'stop_loss');
-        } else if (pos.takeProfit && price <= pos.takeProfit) {
-          this.closePositionInternal(id, pos.takeProfit, 'take_profit');
-        }
-      }
-    }
-    
-    // Notify subscribers
-    const callback = this.priceSubscriptions.get(symbol);
-    if (callback) {
-      callback(price);
-    }
-  }
-  
-  async placeMarketOrder(
-    symbol: string,
-    direction: TradeDirection,
-    quantity: number,
-    stopLoss: number,
-    takeProfit?: number
-  ): Promise<OrderResult> {
-    const price = await this.getLatestPrice(symbol);
-    
-    // Simulate slippage (0-2 pips)
-    const slippage = (Math.random() * 0.0002) * (direction === 'long' ? 1 : -1);
-    const filledPrice = price * (1 + slippage);
-    
-    const positionId = ulid();
-    this.positions.set(positionId, {
-      id: positionId,
-      symbol,
-      direction,
-      entryPrice: filledPrice,
-      quantity,
-      stopLoss,
-      takeProfit,
-      openedAt: new Date(),
-    });
-    
-    logger.info('Paper order filled', {
-      positionId,
-      symbol,
-      direction,
-      quantity,
-      price: filledPrice,
-    });
-    
-    return {
-      orderId: positionId,
-      status: 'filled',
-      filledPrice,
-      filledQuantity: quantity,
-      commission: quantity * filledPrice * 0.0001, // 1 pip commission
-    };
-  }
-  
-  async placeLimitOrder(
-    symbol: string,
-    direction: TradeDirection,
-    quantity: number,
-    price: number,
-    stopLoss: number,
-    takeProfit?: number
-  ): Promise<OrderResult> {
-    // For simplicity, treat limit orders as market orders in paper trading
-    // A real implementation would queue them
-    return this.placeMarketOrder(symbol, direction, quantity, stopLoss, takeProfit);
-  }
-  
-  async modifyOrder(
-    orderId: string,
-    stopLoss?: number,
-    takeProfit?: number
-  ): Promise<OrderResult> {
-    const position = this.positions.get(orderId);
-    if (!position) {
-      return { orderId, status: 'rejected', message: 'Position not found' };
-    }
-    
-    if (stopLoss !== undefined) position.stopLoss = stopLoss;
-    if (takeProfit !== undefined) position.takeProfit = takeProfit;
-    
-    return { orderId, status: 'filled' };
-  }
-  
-  async cancelOrder(orderId: string): Promise<boolean> {
-    return this.positions.delete(orderId);
-  }
-  
-  async closePosition(positionId: string): Promise<OrderResult> {
-    const position = this.positions.get(positionId);
-    if (!position) {
-      return { orderId: positionId, status: 'rejected', message: 'Position not found' };
-    }
-    
-    const price = await this.getLatestPrice(position.symbol);
-    return this.closePositionInternal(positionId, price, 'manual');
-  }
-  
-  async getOpenPositions(): Promise<Trade[]> {
-    const trades: Trade[] = [];
-    for (const pos of this.positions.values()) {
-      const currentPrice = this.currentPrices.get(pos.symbol) || pos.entryPrice;
-      const pnl = pos.direction === 'long'
-        ? (currentPrice - pos.entryPrice) * pos.quantity
-        : (pos.entryPrice - currentPrice) * pos.quantity;
-      
-      trades.push({
-        id: pos.id,
-        symbol: pos.symbol,
-        direction: pos.direction,
-        status: 'open',
-        strategy: 'unknown',
-        entryPrice: pos.entryPrice,
-        entryTime: pos.openedAt,
-        entryReason: 'paper_trade',
-        positionSize: pos.quantity,
-        positionValue: pos.quantity * currentPrice,
-        stopLoss: pos.stopLoss,
-        takeProfit: pos.takeProfit,
-        profitLoss: pnl,
-        profitLossPercent: (pnl / (pos.quantity * pos.entryPrice)) * 100,
-        followedRules: true,
-        behavioralFlags: [],
-      });
-    }
-    return trades;
-  }
-  
-  async getPosition(positionId: string): Promise<Trade | null> {
-    const positions = await this.getOpenPositions();
-    return positions.find(p => p.id === positionId) || null;
-  }
-  
-  private closePositionInternal(
-    positionId: string,
-    exitPrice: number,
-    reason: string
-  ): OrderResult {
-    const position = this.positions.get(positionId);
-    if (!position) {
-      return { orderId: positionId, status: 'rejected' };
-    }
-    
-    const pnl = position.direction === 'long'
-      ? (exitPrice - position.entryPrice) * position.quantity
-      : (position.entryPrice - exitPrice) * position.quantity;
-    
-    this.balance += pnl;
-    this.positions.delete(positionId);
-    
-    logger.info('Paper position closed', {
-      positionId,
-      exitPrice,
-      reason,
-      pnl,
-      newBalance: this.balance,
-    });
-    
-    return {
-      orderId: positionId,
-      status: 'filled',
-      filledPrice: exitPrice,
-      filledQuantity: position.quantity,
-    };
-  }
-  
-  private calculateEquity(): number {
-    let equity = this.balance;
-    for (const pos of this.positions.values()) {
-      const currentPrice = this.currentPrices.get(pos.symbol) || pos.entryPrice;
-      const pnl = pos.direction === 'long'
-        ? (currentPrice - pos.entryPrice) * pos.quantity
-        : (pos.entryPrice - currentPrice) * pos.quantity;
-      equity += pnl;
-    }
-    return equity;
-  }
-}
-```
-
-### 3.4 Strategy Interface
-
-```typescript
-// src/trading/strategies/base.ts
-
-import type { OHLCV, TradeSignal, MarketRegime, TradingProceduralMemory } from '../../types.js';
-
-export interface StrategyContext {
-  symbol: string;
-  accountBalance: number;
-  currentRegime: MarketRegime;
-  proceduralMemories: TradingProceduralMemory[];
-  recentTrades: { direction: 'long' | 'short'; profitLoss: number }[];
-}
-
-export interface StrategyResult {
-  signal: TradeSignal | null;
-  analysis: {
-    trend: 'up' | 'down' | 'sideways';
-    strength: number;
-    volatility: number;
-    regime: MarketRegime;
-  };
-  reason: string;
-}
-
-export interface TradingStrategy {
-  name: string;
-  description: string;
-  
-  // Supported regimes (empty = all)
-  supportedRegimes: MarketRegime[];
-  
-  // Analysis method
-  analyze(candles: OHLCV[], context: StrategyContext): Promise<StrategyResult>;
-  
-  // Get current parameters
-  getParameters(): Record<string, number>;
-  
-  // Update parameters (within bounds)
-  updateParameters(params: Partial<Record<string, number>>): void;
-}
-```
-
-### 3.5 EMA Crossover Strategy (Simple Starting Strategy)
-
-```typescript
-// src/trading/strategies/ema-crossover.ts
-
-import type { TradingStrategy, StrategyContext, StrategyResult } from './base.js';
-import type { OHLCV, TradeSignal, MarketRegime } from '../../types.js';
-import { calculateEMA } from '../indicators/ema.js';
-import { calculateATR } from '../indicators/atr.js';
-
-interface EMAParams {
-  fastPeriod: number;
-  slowPeriod: number;
-  atrPeriod: number;
-  atrMultiplierSL: number;
-  atrMultiplierTP: number;
-  minTrendStrength: number;
-}
-
-const DEFAULT_PARAMS: EMAParams = {
-  fastPeriod: 12,
-  slowPeriod: 26,
-  atrPeriod: 14,
-  atrMultiplierSL: 2.0,
-  atrMultiplierTP: 3.0,
-  minTrendStrength: 0.3,
-};
-
-export class EMACrossoverStrategy implements TradingStrategy {
-  name = 'ema_crossover';
-  description = 'Simple EMA crossover with ATR-based stops';
-  supportedRegimes: MarketRegime[] = ['trending_up', 'trending_down'];
-  
-  private params: EMAParams;
-  
-  constructor(params: Partial<EMAParams> = {}) {
-    this.params = { ...DEFAULT_PARAMS, ...params };
-  }
-  
-  async analyze(candles: OHLCV[], context: StrategyContext): Promise<StrategyResult> {
-    if (candles.length < this.params.slowPeriod + 2) {
-      return {
-        signal: null,
-        analysis: { trend: 'sideways', strength: 0, volatility: 0, regime: 'unknown' },
-        reason: 'Insufficient data',
-      };
-    }
-    
-    // Calculate EMAs
-    const closes = candles.map(c => c.close);
-    const fastEMA = calculateEMA(closes, this.params.fastPeriod);
-    const slowEMA = calculateEMA(closes, this.params.slowPeriod);
-    const atr = calculateATR(candles, this.params.atrPeriod);
-    
-    const currentFast = fastEMA[fastEMA.length - 1];
-    const currentSlow = slowEMA[slowEMA.length - 1];
-    const prevFast = fastEMA[fastEMA.length - 2];
-    const prevSlow = slowEMA[slowEMA.length - 2];
-    const currentATR = atr[atr.length - 1];
-    const currentPrice = candles[candles.length - 1].close;
-    
-    // Determine trend
-    const trendStrength = Math.abs(currentFast - currentSlow) / currentSlow;
-    const trend = currentFast > currentSlow ? 'up' : currentFast < currentSlow ? 'down' : 'sideways';
-    
-    // Detect regime
-    const avgATR = atr.slice(-20).reduce((a, b) => a + b, 0) / 20;
-    const volatilityRatio = currentATR / avgATR;
-    let regime: MarketRegime;
-    if (volatilityRatio > 1.5) {
-      regime = 'volatile';
-    } else if (trendStrength > this.params.minTrendStrength) {
-      regime = trend === 'up' ? 'trending_up' : 'trending_down';
-    } else {
-      regime = 'ranging';
-    }
-    
-    // Check if regime is supported
-    if (!this.supportedRegimes.includes(regime)) {
-      return {
-        signal: null,
-        analysis: { trend, strength: trendStrength, volatility: volatilityRatio, regime },
-        reason: `Current regime (${regime}) not supported by this strategy`,
-      };
-    }
-    
-    // Look for crossover
-    const bullishCross = prevFast <= prevSlow && currentFast > currentSlow;
-    const bearishCross = prevFast >= prevSlow && currentFast < currentSlow;
-    
-    // Apply procedural memory adjustments
-    let positionSizeMultiplier = 1.0;
-    let shouldSkip = false;
-    
-    for (const memory of context.proceduralMemories) {
-      if (!memory.enabled || memory.confidence < 0.6) continue;
-      
-      if (memory.conditionType === 'high_volatility' && volatilityRatio > 1.3) {
-        if (memory.adjustmentType === 'reduce_size') {
-          positionSizeMultiplier *= memory.adjustmentMagnitude;
-        } else if (memory.adjustmentType === 'skip_trade') {
-          shouldSkip = true;
-        }
-      }
-      
-      if (memory.conditionType === 'losing_streak' && 
-          context.recentTrades.filter(t => t.profitLoss < 0).length >= 3) {
-        if (memory.adjustmentType === 'reduce_size') {
-          positionSizeMultiplier *= memory.adjustmentMagnitude;
-        }
-      }
-    }
-    
-    if (shouldSkip) {
-      return {
-        signal: null,
-        analysis: { trend, strength: trendStrength, volatility: volatilityRatio, regime },
-        reason: 'Procedural memory: skip trade in current conditions',
-      };
-    }
-    
-    if (!bullishCross && !bearishCross) {
-      return {
-        signal: null,
-        analysis: { trend, strength: trendStrength, volatility: volatilityRatio, regime },
-        reason: 'No crossover signal',
-      };
-    }
-    
-    // Calculate position size (simplified - in reality would consider account balance)
-    const baseSize = context.accountBalance * 0.02 / currentPrice; // 2% risk per trade
-    const adjustedSize = baseSize * positionSizeMultiplier;
-    
-    // Build signal
-    const direction = bullishCross ? 'long' : 'short';
-    const stopDistance = currentATR * this.params.atrMultiplierSL;
-    const tpDistance = currentATR * this.params.atrMultiplierTP;
-    
-    const signal: TradeSignal = {
-      symbol: context.symbol,
-      direction,
-      entryPrice: currentPrice,
-      stopLoss: direction === 'long' 
-        ? currentPrice - stopDistance 
-        : currentPrice + stopDistance,
-      takeProfit: direction === 'long'
-        ? currentPrice + tpDistance
-        : currentPrice - tpDistance,
-      positionSize: adjustedSize,
-      strategy: this.name,
-      confidence: Math.min(trendStrength * 2, 1),
-      reason: `${direction === 'long' ? 'Bullish' : 'Bearish'} EMA crossover`,
-      marketRegime: regime,
-      timestamp: new Date(),
-    };
-    
-    return {
-      signal,
-      analysis: { trend, strength: trendStrength, volatility: volatilityRatio, regime },
-      reason: signal.reason,
-    };
-  }
-  
-  getParameters(): Record<string, number> {
-    return { ...this.params };
-  }
-  
-  updateParameters(params: Partial<EMAParams>): void {
-    // Validate bounds
-    if (params.fastPeriod !== undefined) {
-      this.params.fastPeriod = Math.max(5, Math.min(50, params.fastPeriod));
-    }
-    if (params.slowPeriod !== undefined) {
-      this.params.slowPeriod = Math.max(10, Math.min(200, params.slowPeriod));
-    }
-    // Ensure fast < slow
-    if (this.params.fastPeriod >= this.params.slowPeriod) {
-      this.params.fastPeriod = this.params.slowPeriod - 1;
-    }
-  }
-}
+    def __init__(self, config):
+        self.config = config
+        self.rules = CONSTITUTIONAL_RULES.copy()
+        # Rules are frozen - agents cannot modify them
+        
+    def validate_signal(self, signal: dict, state: dict) -> ValidationResult:
+        """Validate a trade signal against constitutional rules."""
+        warnings = []
+        
+        for rule in self.rules:
+            try:
+                # Create evaluation context
+                context = {"signal": signal, "state": state}
+                
+                # Evaluate rule
+                passed = eval(rule.check, {"__builtins__": {}}, context)
+                
+                if not passed:
+                    if rule.severity == "block":
+                        return ValidationResult(
+                            rejected=True,
+                            reason=f"{rule.name}: {rule.description}",
+                            rule=rule.id
+                        )
+                    else:
+                        warnings.append(f"{rule.name}: {rule.description}")
+                        
+            except Exception as e:
+                # Rule evaluation failed - err on side of caution
+                return ValidationResult(
+                    rejected=True,
+                    reason=f"Rule evaluation failed: {rule.id} - {str(e)}",
+                    rule=rule.id
+                )
+                
+        return ValidationResult(rejected=False, warnings=warnings)
+        
+    def check_circuit_breakers(self, state: dict) -> Optional[str]:
+        """Check if any circuit breaker should activate."""
+        if state.get("daily_loss_pct", 0) >= 3.0:
+            return "daily_loss_limit"
+        if state.get("weekly_loss_pct", 0) >= 10.0:
+            return "weekly_loss_limit"
+        if state.get("drawdown_pct", 0) >= 20.0:
+            return "max_drawdown"
+        if state.get("consecutive_losses", 0) >= 5:
+            return "consecutive_losses"
+        return None
 ```
 
 ---
 
-## 4. Learner Agent: The "Feeling" System
+## 4. Trading Agents (Org Members)
 
-The Learner analyzes completed trades and updates procedural memory.
+### 4.1 Agent Fleet Setup
 
-```typescript
-// src/trading/learner.ts
+Trading agents are registered as GemCode org members:
 
-import type BetterSqlite3 from 'better-sqlite3';
-import type { Trade, TradingProceduralMemory, BehavioralFlag } from '../types.js';
-import { ulid } from 'ulid';
-import { createLogger } from '../observability/logger.js';
+```python
+# gemcode/src/gemcode/trading/agents/__init__.py
 
-const logger = createLogger('trading.learner');
+from gemcode.org import hire_member
 
-type Database = BetterSqlite3.Database;
+def setup_trading_fleet(cfg):
+    """Setup the trading agent fleet."""
+    
+    # Overseer - Constitutional enforcement (highest authority)
+    hire_member(
+        cfg,
+        name="overseer",
+        title="Risk Overseer",
+        kind="subagent",
+        description="""Constitutional risk enforcement agent.
+        
+        AUTHORITY: Highest. Can halt all trading. Cannot be overridden.
+        
+        RESPONSIBILITIES:
+        - Validate all trade signals against constitutional rules
+        - Monitor risk limits (position size, daily loss, drawdown)
+        - Activate circuit breakers when limits breached
+        - Alert human operator on critical events
+        
+        CANNOT:
+        - Place trades
+        - Modify strategies
+        - Be shut down by other agents
+        """,
+        skill_name="trading/overseer"
+    )
+    
+    # Analyst - Market analysis (data only)
+    hire_member(
+        cfg,
+        name="analyst",
+        title="Market Analyst",
+        kind="subagent",
+        description="""Market data analysis agent.
+        
+        RESPONSIBILITIES:
+        - Fetch and process market data
+        - Identify market regime (trending, ranging, volatile)
+        - Calculate technical indicators
+        - Monitor news and events
+        - Provide analysis to Strategist
+        
+        CANNOT:
+        - Place orders
+        - Decide to trade
+        - Access execution systems
+        """,
+        skill_name="trading/analyst"
+    )
+    
+    # Strategist - Decision making
+    hire_member(
+        cfg,
+        name="strategist",
+        title="Trading Strategist",
+        kind="subagent",
+        description="""Trading decision agent.
+        
+        RESPONSIBILITIES:
+        - Receive analysis from Analyst
+        - Decide whether to trade based on strategy rules
+        - Select which strategy to use
+        - Generate trade signals with entry/stop/target
+        - Send signals to Overseer for validation
+        
+        CANNOT:
+        - Execute trades directly
+        - Bypass Overseer validation
+        - Modify constitutional rules
+        """,
+        skill_name="trading/strategist"
+    )
+    
+    # Executor - Order execution
+    hire_member(
+        cfg,
+        name="executor",
+        title="Trade Executor",
+        kind="subagent",
+        description="""Order execution agent.
+        
+        RESPONSIBILITIES:
+        - Execute validated signals from Overseer
+        - Manage order lifecycle (place, modify, cancel)
+        - Handle partial fills
+        - Manage stop losses and take profits
+        - Report execution to Learner
+        
+        CANNOT:
+        - Decide to trade independently
+        - Exceed position limits
+        - Modify strategy parameters
+        """,
+        skill_name="trading/executor"
+    )
+    
+    # Learner - Post-trade analysis
+    hire_member(
+        cfg,
+        name="learner",
+        title="Trade Learner",
+        kind="subagent",
+        description="""Post-trade analysis and learning agent.
+        
+        RESPONSIBILITIES:
+        - Analyze completed trades (win/lose)
+        - Evaluate process quality (not just outcome)
+        - Update procedural memory ("feeling" system)
+        - Identify error patterns to avoid
+        - Propose strategy parameter adjustments
+        
+        CANNOT:
+        - Trade
+        - Modify live strategies
+        - Access real capital
+        """,
+        skill_name="trading/learner"
+    )
+```
 
-export class TradingLearner {
-  constructor(private db: Database) {}
-  
-  /**
-   * Analyze a completed trade and extract lessons.
-   * This is the core "learning from mistakes" function.
-   */
-  analyzeTrade(trade: Trade): {
-    processScore: number;
-    lessonsLearned: string[];
-    behavioralIssues: BehavioralFlag[];
-    proceduralUpdates: Partial<TradingProceduralMemory>[];
-  } {
-    const lessonsLearned: string[] = [];
-    const behavioralIssues: BehavioralFlag[] = [];
-    const proceduralUpdates: Partial<TradingProceduralMemory>[] = [];
+### 4.2 Agent Communication Flow
+
+```
+                    ┌─────────────────────────────────────────────┐
+                    │              GemCode Event Bus               │
+                    └─────────────────────────────────────────────┘
+                           ▲                    │
+                           │                    ▼
+    ┌──────────┐    ┌──────────────┐    ┌───────────────┐    ┌──────────┐
+    │ Analyst  │───▶│  Strategist  │───▶│   Overseer    │───▶│ Executor │
+    │          │    │              │    │ (Constitution) │    │          │
+    │ market   │    │ trade.signal │    │ trade.validated│    │ trade    │
+    │ analysis │    │              │    │ or rejected    │    │ executed │
+    └──────────┘    └──────────────┘    └───────────────┘    └──────────┘
+         │                                                         │
+         │                                                         │
+         │              ┌──────────────┐                          │
+         └─────────────▶│   Learner    │◀─────────────────────────┘
+                        │              │
+                        │ trade.closed │
+                        │ learn pattern│
+                        └──────────────┘
+```
+
+---
+
+## 5. Trading Memory System
+
+### 5.1 Extending GemCode's Memory
+
+GemCode already has memory layers. We add trading-specific memory:
+
+```python
+# gemcode/src/gemcode/trading/memory/trade_journal.py
+
+"""Trade Journal - Episodic memory for trades."""
+
+import json
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, List
+from dataclasses import dataclass, asdict
+
+@dataclass
+class TradeRecord:
+    """A single trade record."""
+    id: str
+    symbol: str
+    direction: str  # "long" or "short"
+    strategy: str
     
-    // Process evaluation (not outcome!)
-    let processScore = 1.0;
+    # Entry
+    entry_time: str
+    entry_price: float
+    entry_reason: str
+    market_regime: str
     
-    // Did we follow the rules?
-    if (!trade.followedRules) {
-      processScore -= 0.3;
-      lessonsLearned.push('Trade deviated from strategy rules');
-    }
+    # Exit
+    exit_time: Optional[str] = None
+    exit_price: Optional[float] = None
+    exit_reason: Optional[str] = None
     
-    // Did we move the stop loss?
-    if (trade.behavioralFlags.includes('moved_stop')) {
-      processScore -= 0.2;
-      behavioralIssues.push('moved_stop');
-      lessonsLearned.push('Moving stop loss to avoid loss is a mistake');
-      
-      // Update procedural memory: when tempted to move stop, don't
-      proceduralUpdates.push({
-        conditionType: 'tempted_to_move_stop',
-        adjustmentType: 'reminder',
-        adjustmentMagnitude: 1.0,
-      });
-    }
+    # Position
+    position_size: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: Optional[float] = None
     
-    // Was this a revenge trade?
-    if (trade.behavioralFlags.includes('revenge_trade')) {
-      processScore -= 0.3;
-      behavioralIssues.push('revenge_trade');
-      lessonsLearned.push('Revenge trading after loss leads to more losses');
-      
-      // Update procedural memory: after loss, reduce size
-      proceduralUpdates.push({
-        conditionType: 'after_loss',
-        adjustmentType: 'reduce_size',
-        adjustmentMagnitude: 0.5,
-      });
-    }
+    # Outcome
+    profit_loss: Optional[float] = None
+    profit_loss_pct: Optional[float] = None
+    max_adverse: Optional[float] = None
+    max_favorable: Optional[float] = None
+    hold_duration_s: Optional[int] = None
     
-    // Check if trade was taken against the regime
-    // This would compare trade direction vs market regime at entry
+    # Process evaluation (THE KEY INSIGHT)
+    followed_rules: bool = True
+    entry_quality: Optional[float] = None  # 0-1
+    exit_quality: Optional[float] = None   # 0-1
+    behavioral_flags: List[str] = None
     
-    // Analyze exit quality
-    if (trade.exitQualityScore !== undefined && trade.exitQualityScore < 0.5) {
-      if (trade.behavioralFlags.includes('early_exit')) {
-        processScore -= 0.1;
-        lessonsLearned.push('Early exit missed profitable continuation');
-      }
-      if (trade.behavioralFlags.includes('late_exit')) {
-        processScore -= 0.1;
-        lessonsLearned.push('Late exit gave back profits');
-      }
-    }
+    # Learning
+    lesson_learned: Optional[str] = None
+    pattern_identified: Optional[str] = None
     
-    // MAE/MFE analysis
-    if (trade.maxAdverseExcursion && trade.maxFavorableExcursion && trade.profitLoss !== undefined) {
-      const mae = Math.abs(trade.maxAdverseExcursion);
-      const mfe = trade.maxFavorableExcursion;
-      
-      if (trade.profitLoss < 0 && mfe > mae * 2) {
-        lessonsLearned.push('Trade was in profit but ended as loss - improve exit management');
-      }
-    }
+class TradeJournal:
+    """Episodic memory for trades."""
     
-    return {
-      processScore: Math.max(0, processScore),
-      lessonsLearned,
-      behavioralIssues,
-      proceduralUpdates,
-    };
-  }
-  
-  /**
-   * Update procedural memory with a new learned pattern.
-   * This creates the "feeling" that influences future behavior.
-   */
-  updateProceduralMemory(
-    conditionType: string,
-    adjustmentType: string,
-    outcome: number,
-    wasAdjustmentApplied: boolean
-  ): void {
-    // Find existing entry
-    const existing = this.db.prepare(
-      `SELECT * FROM procedural_trading_memory 
-       WHERE condition_type = ? AND adjustment_type = ?`
-    ).get(conditionType, adjustmentType) as any;
-    
-    if (existing) {
-      // Update with new evidence
-      const field = wasAdjustmentApplied ? 'outcome_when_applied' : 'outcome_when_ignored';
-      const currentOutcome = existing[field] || 0;
-      const count = existing.supporting_trades + 1;
-      
-      // Running average
-      const newOutcome = ((currentOutcome * existing.supporting_trades) + outcome) / count;
-      
-      // Confidence increases with more evidence
-      let confidence = existing.confidence;
-      if (wasAdjustmentApplied && outcome > 0) {
-        confidence = Math.min(1, confidence + 0.05);
-      } else if (!wasAdjustmentApplied && outcome < 0) {
-        confidence = Math.min(1, confidence + 0.05);
-      }
-      
-      this.db.prepare(
-        `UPDATE procedural_trading_memory 
-         SET ${field} = ?, supporting_trades = ?, confidence = ?, 
-             last_validated_at = datetime('now'), updated_at = datetime('now')
-         WHERE id = ?`
-      ).run(newOutcome, count, confidence, existing.id);
-      
-      logger.info('Procedural memory updated', {
-        conditionType,
-        adjustmentType,
-        confidence,
-        supportingTrades: count,
-      });
-    } else {
-      // Create new entry
-      const id = ulid();
-      this.db.prepare(
-        `INSERT INTO procedural_trading_memory 
-         (id, condition_type, adjustment_type, outcome_when_applied, outcome_when_ignored,
-          supporting_trades, confidence, enabled)
-         VALUES (?, ?, ?, ?, ?, 1, 0.5, 1)`
-      ).run(
-        id,
-        conditionType,
-        adjustmentType,
-        wasAdjustmentApplied ? outcome : null,
-        wasAdjustmentApplied ? null : outcome
-      );
-      
-      logger.info('Procedural memory created', { id, conditionType, adjustmentType });
-    }
-  }
-  
-  /**
-   * Record a trading error pattern.
-   * This is specifically for mistakes we should not repeat.
-   */
-  recordErrorPattern(
-    errorType: string,
-    context: Record<string, unknown>,
-    lossAmount: number
-  ): void {
-    const existing = this.db.prepare(
-      `SELECT * FROM trading_error_patterns WHERE error_type = ?`
-    ).get(errorType) as any;
-    
-    if (existing) {
-      this.db.prepare(
-        `UPDATE trading_error_patterns 
-         SET occurrence_count = occurrence_count + 1,
-             total_loss_from_error = total_loss_from_error + ?,
-             error_context = ?,
-             last_occurred_at = datetime('now')
-         WHERE id = ?`
-      ).run(lossAmount, JSON.stringify(context), existing.id);
-      
-      logger.warn('Error pattern recurring', {
-        errorType,
-        occurrences: existing.occurrence_count + 1,
-        totalLoss: existing.total_loss_from_error + lossAmount,
-      });
-    } else {
-      const id = ulid();
-      this.db.prepare(
-        `INSERT INTO trading_error_patterns 
-         (id, error_type, error_context, total_loss_from_error, 
-          first_occurred_at, last_occurred_at)
-         VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))`
-      ).run(id, errorType, JSON.stringify(context), lossAmount);
-      
-      logger.warn('New error pattern recorded', { id, errorType, loss: lossAmount });
-    }
-  }
-  
-  /**
-   * Get all active procedural memories.
-   * These influence trading decisions (the "feeling").
-   */
-  getActiveProceduralMemories(): TradingProceduralMemory[] {
-    const rows = this.db.prepare(
-      `SELECT * FROM procedural_trading_memory WHERE enabled = 1`
-    ).all() as any[];
-    
-    return rows.map(row => ({
-      id: row.id,
-      conditionType: row.condition_type,
-      conditionParams: JSON.parse(row.condition_params || '{}'),
-      adjustmentType: row.adjustment_type,
-      adjustmentMagnitude: row.adjustment_magnitude || 1.0,
-      supportingTrades: row.supporting_trades,
-      outcomeWhenApplied: row.outcome_when_applied,
-      outcomeWhenIgnored: row.outcome_when_ignored,
-      confidence: row.confidence,
-      enabled: row.enabled === 1,
-    }));
-  }
-  
-  /**
-   * Check for error patterns that should prevent a trade.
-   */
-  checkErrorPatterns(context: Record<string, unknown>): {
-    shouldBlock: boolean;
-    reason: string | null;
-  } {
-    const patterns = this.db.prepare(
-      `SELECT * FROM trading_error_patterns 
-       WHERE occurrence_count >= 3 AND prevention_effective = 0`
-    ).all() as any[];
-    
-    // Check if current context matches any recurring error pattern
-    for (const pattern of patterns) {
-      const errorContext = JSON.parse(pattern.error_context);
-      
-      // Simple context matching (could be more sophisticated)
-      if (this.contextsMatch(errorContext, context)) {
+    def __init__(self, project_root: Path):
+        self.path = project_root / ".gemcode" / "trading" / "trade_journal.jsonl"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        
+    def record(self, trade: TradeRecord) -> None:
+        """Record a trade."""
+        with open(self.path, "a") as f:
+            f.write(json.dumps(asdict(trade)) + "\n")
+            
+    def get_recent(self, limit: int = 20) -> List[TradeRecord]:
+        """Get recent trades."""
+        if not self.path.exists():
+            return []
+        trades = []
+        with open(self.path) as f:
+            for line in f:
+                trades.append(TradeRecord(**json.loads(line)))
+        return trades[-limit:]
+        
+    def get_by_strategy(self, strategy: str, limit: int = 50) -> List[TradeRecord]:
+        """Get trades for a specific strategy."""
+        all_trades = self.get_recent(500)
+        return [t for t in all_trades if t.strategy == strategy][-limit:]
+        
+    def calculate_stats(self, trades: List[TradeRecord]) -> dict:
+        """Calculate performance statistics."""
+        if not trades:
+            return {}
+            
+        closed = [t for t in trades if t.profit_loss is not None]
+        if not closed:
+            return {}
+            
+        wins = [t for t in closed if t.profit_loss > 0]
+        losses = [t for t in closed if t.profit_loss < 0]
+        
+        total_profit = sum(t.profit_loss for t in wins)
+        total_loss = abs(sum(t.profit_loss for t in losses))
+        
         return {
-          shouldBlock: true,
-          reason: `Error pattern "${pattern.error_type}" has occurred ${pattern.occurrence_count} times with total loss of $${pattern.total_loss_from_error.toFixed(2)}`,
-        };
-      }
-    }
+            "total_trades": len(closed),
+            "win_rate": len(wins) / len(closed) if closed else 0,
+            "profit_factor": total_profit / total_loss if total_loss > 0 else float('inf'),
+            "avg_win": total_profit / len(wins) if wins else 0,
+            "avg_loss": total_loss / len(losses) if losses else 0,
+            "process_score": sum(t.entry_quality or 0.5 for t in closed) / len(closed),
+        }
+```
+
+### 5.2 Procedural Memory ("Feeling" System)
+
+This is the core insight - behavioral adjustments that influence future decisions:
+
+```python
+# gemcode/src/gemcode/trading/memory/procedural.py
+
+"""Procedural Memory - The "Feeling" System.
+
+This implements behavioral adjustments that influence trading decisions
+without explicit retrieval. The agent doesn't "remember" these facts -
+it "feels" them through modified behavior.
+"""
+
+import json
+from pathlib import Path
+from typing import List, Optional
+from dataclasses import dataclass, asdict
+
+@dataclass
+class ProceduralMemory:
+    """A behavioral adjustment learned from experience."""
+    id: str
+    condition_type: str      # When this applies
+    condition_params: dict   # Parameters for condition
+    adjustment_type: str     # What to adjust
+    adjustment_value: float  # How much to adjust
     
-    return { shouldBlock: false, reason: null };
-  }
-  
-  private contextsMatch(
-    pattern: Record<string, unknown>,
-    current: Record<string, unknown>
-  ): boolean {
-    // Check if key pattern attributes match
-    const keysToCheck = ['marketRegime', 'timeOfDay', 'afterLoss', 'volatilityLevel'];
+    # Evidence
+    supporting_trades: int = 0
+    outcome_when_applied: Optional[float] = None
+    outcome_when_ignored: Optional[float] = None
     
-    for (const key of keysToCheck) {
-      if (key in pattern && key in current && pattern[key] === current[key]) {
-        return true;
-      }
-    }
+    # Confidence
+    confidence: float = 0.5
+    enabled: bool = True
+
+# Example procedural memories that might be learned:
+EXAMPLE_MEMORIES = [
+    ProceduralMemory(
+        id="high_volatility_reduce_size",
+        condition_type="volatility_percentile",
+        condition_params={"above": 80},
+        adjustment_type="position_size_multiplier",
+        adjustment_value=0.5,  # Half size in high volatility
+        supporting_trades=15,
+        outcome_when_applied=2.3,
+        outcome_when_ignored=-4.1,
+        confidence=0.85
+    ),
+    ProceduralMemory(
+        id="after_loss_wait",
+        condition_type="previous_trade_result",
+        condition_params={"result": "loss"},
+        adjustment_type="entry_delay_minutes",
+        adjustment_value=30,  # Wait 30 min after loss
+        supporting_trades=12,
+        outcome_when_applied=1.8,
+        outcome_when_ignored=-2.5,
+        confidence=0.78
+    ),
+    ProceduralMemory(
+        id="news_event_skip",
+        condition_type="time_to_news",
+        condition_params={"within_minutes": 30, "impact": "high"},
+        adjustment_type="skip_trade",
+        adjustment_value=1.0,
+        supporting_trades=8,
+        outcome_when_applied=0.0,  # No loss from skipped trades
+        outcome_when_ignored=-3.2,
+        confidence=0.72
+    ),
+]
+
+class ProceduralMemoryManager:
+    """Manages procedural trading memory."""
     
-    return false;
-  }
-}
+    def __init__(self, project_root: Path):
+        self.path = project_root / ".gemcode" / "trading" / "procedural_memory.json"
+        self.memories: List[ProceduralMemory] = []
+        self._load()
+        
+    def _load(self):
+        if self.path.exists():
+            data = json.loads(self.path.read_text())
+            self.memories = [ProceduralMemory(**m) for m in data]
+            
+    def _save(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        data = [asdict(m) for m in self.memories]
+        self.path.write_text(json.dumps(data, indent=2))
+        
+    def get_active_adjustments(self, context: dict) -> List[tuple]:
+        """
+        Get all behavioral adjustments that apply to current context.
+        Returns list of (adjustment_type, adjustment_value, confidence).
+        
+        This is the "feeling" - the agent's behavior is modified without
+        explicit reasoning about why.
+        """
+        adjustments = []
+        
+        for memory in self.memories:
+            if not memory.enabled or memory.confidence < 0.5:
+                continue
+                
+            if self._condition_matches(memory, context):
+                adjustments.append((
+                    memory.adjustment_type,
+                    memory.adjustment_value,
+                    memory.confidence
+                ))
+                
+        return adjustments
+        
+    def _condition_matches(self, memory: ProceduralMemory, context: dict) -> bool:
+        """Check if a memory's condition matches current context."""
+        ctype = memory.condition_type
+        params = memory.condition_params
+        
+        if ctype == "volatility_percentile":
+            return context.get("volatility_percentile", 50) >= params.get("above", 80)
+            
+        if ctype == "previous_trade_result":
+            return context.get("previous_result") == params.get("result")
+            
+        if ctype == "time_to_news":
+            minutes = context.get("minutes_to_news", float('inf'))
+            return minutes <= params.get("within_minutes", 30)
+            
+        if ctype == "consecutive_losses":
+            return context.get("consecutive_losses", 0) >= params.get("count", 3)
+            
+        if ctype == "time_of_day":
+            hour = context.get("hour", 12)
+            return params.get("start", 0) <= hour < params.get("end", 24)
+            
+        return False
+        
+    def update_from_trade(self, context: dict, outcome: float, adjustment_applied: bool):
+        """Update procedural memory based on trade outcome."""
+        for memory in self.memories:
+            if not self._condition_matches(memory, context):
+                continue
+                
+            memory.supporting_trades += 1
+            
+            if adjustment_applied:
+                # Update outcome when applied
+                if memory.outcome_when_applied is None:
+                    memory.outcome_when_applied = outcome
+                else:
+                    # Running average
+                    n = memory.supporting_trades
+                    memory.outcome_when_applied = (
+                        (memory.outcome_when_applied * (n - 1) + outcome) / n
+                    )
+            else:
+                # Update outcome when ignored
+                if memory.outcome_when_ignored is None:
+                    memory.outcome_when_ignored = outcome
+                else:
+                    n = memory.supporting_trades
+                    memory.outcome_when_ignored = (
+                        (memory.outcome_when_ignored * (n - 1) + outcome) / n
+                    )
+                    
+            # Update confidence based on comparative outcomes
+            if memory.outcome_when_applied is not None and memory.outcome_when_ignored is not None:
+                if memory.outcome_when_applied > memory.outcome_when_ignored:
+                    memory.confidence = min(0.95, memory.confidence + 0.02)
+                else:
+                    memory.confidence = max(0.3, memory.confidence - 0.03)
+                    
+        self._save()
 ```
 
 ---
 
-## 5. Integration with Automaton Loop
+## 6. Trading Tools
 
-The trading subsystem integrates with Automaton's heartbeat daemon:
+### 6.1 Tool Registration
 
-```typescript
-// Addition to src/heartbeat/tasks/trading.ts
+Add trading tools to GemCode's tool system:
 
-import type { HeartbeatTaskFn, TickContext, HeartbeatLegacyContext } from '../../types.js';
-import { TradingOverseer } from '../../trading/overseer.js';
-import { TradingLearner } from '../../trading/learner.js';
-import { EMACrossoverStrategy } from '../../trading/strategies/ema-crossover.js';
-import { PaperTradingConnector } from '../../trading/exchange/paper.js';
-import { createLogger } from '../../observability/logger.js';
+```python
+# gemcode/src/gemcode/tools/trading_tools.py
 
-const logger = createLogger('heartbeat.trading');
+"""Trading tools for GemCode agents."""
 
-export const tradingTickTask: HeartbeatTaskFn = async (
-  ctx: TickContext,
-  taskCtx: HeartbeatLegacyContext
-): Promise<{ shouldWake: boolean; message?: string }> => {
-  const config = taskCtx.config;
-  
-  // Skip if trading not enabled
-  if (!config.tradingConfig?.enabled) {
-    return { shouldWake: false };
-  }
-  
-  try {
-    const overseer = new TradingOverseer(config.tradingConfig);
-    const learner = new TradingLearner(ctx.db);
-    const strategy = new EMACrossoverStrategy();
-    const exchange = new PaperTradingConnector();
-    
-    await exchange.connect();
-    
-    // Get current state
-    const tradingState = getTradingState(ctx.db);
-    const accountInfo = await exchange.getAccountInfo();
-    const openPositions = await exchange.getOpenPositions();
-    
-    // Check circuit breakers
-    const breakerCheck = overseer.checkCircuitBreakers(tradingState);
-    if (breakerCheck.shouldActivate) {
-      activateCircuitBreaker(ctx.db, breakerCheck.breakerType!, breakerCheck.duration);
-      return { 
-        shouldWake: false, 
-        message: `Circuit breaker activated: ${breakerCheck.breakerType}` 
-      };
-    }
-    
-    // Get market data
-    const candles = await exchange.getOHLCV(
-      config.tradingConfig.defaultSymbol,
-      'H1',
-      100
-    );
-    
-    // Get procedural memories for "feeling"
-    const proceduralMemories = learner.getActiveProceduralMemories();
-    
-    // Run strategy
-    const strategyContext = {
-      symbol: config.tradingConfig.defaultSymbol,
-      accountBalance: accountInfo.balance,
-      currentRegime: tradingState.currentRegime,
-      proceduralMemories,
-      recentTrades: getRecentTrades(ctx.db, 5),
-    };
-    
-    const result = await strategy.analyze(candles, strategyContext);
-    
-    if (!result.signal) {
-      return { shouldWake: false, message: result.reason };
-    }
-    
-    // Validate with Overseer
-    const validationError = overseer.validateSignal(
-      result.signal,
-      tradingState,
-      accountInfo.balance,
-      openPositions.map(p => p as any)
-    );
-    
-    if (validationError) {
-      logger.warn('Trade signal rejected by Overseer', { reason: validationError });
-      return { shouldWake: true, message: validationError };
-    }
-    
-    // Check error patterns
-    const errorCheck = learner.checkErrorPatterns({
-      marketRegime: tradingState.currentRegime,
-      signal: result.signal,
-    });
-    
-    if (errorCheck.shouldBlock) {
-      logger.warn('Trade blocked by error pattern', { reason: errorCheck.reason });
-      return { shouldWake: true, message: `Error pattern: ${errorCheck.reason}` };
-    }
-    
-    // Execute trade
-    const orderResult = await exchange.placeMarketOrder(
-      result.signal.symbol,
-      result.signal.direction,
-      result.signal.positionSize,
-      result.signal.stopLoss,
-      result.signal.takeProfit
-    );
-    
-    if (orderResult.status === 'filled') {
-      recordTradeEntry(ctx.db, result.signal, orderResult);
-      return { shouldWake: true, message: `Trade executed: ${result.signal.direction} ${result.signal.symbol}` };
-    }
-    
-    return { shouldWake: false };
-  } catch (error) {
-    logger.error('Trading tick failed', error instanceof Error ? error : undefined);
-    return { shouldWake: true, message: `Trading error: ${error}` };
-  }
-};
+from gemcode.config import GemCodeConfig
+from gemcode.trading.exchange.base import get_exchange
+from gemcode.trading.memory.trade_journal import TradeJournal
+from gemcode.trading.memory.procedural import ProceduralMemoryManager
 
-// Helper functions would be implemented separately
-function getTradingState(db: any): any { /* ... */ }
-function activateCircuitBreaker(db: any, type: string, duration: number): void { /* ... */ }
-function getRecentTrades(db: any, limit: number): any[] { return []; }
-function recordTradeEntry(db: any, signal: any, order: any): void { /* ... */ }
+def make_trading_tools(cfg: GemCodeConfig):
+    """Build trading function tools."""
+    
+    exchange = get_exchange(cfg)
+    journal = TradeJournal(cfg.project_root)
+    procedural = ProceduralMemoryManager(cfg.project_root)
+    
+    def get_market_data(symbol: str, timeframe: str = "H1", limit: int = 100) -> dict:
+        """
+        Get OHLCV market data for a symbol.
+        
+        Args:
+            symbol: Trading pair (e.g., "XAU/USD")
+            timeframe: Candle timeframe (M1, M5, M15, H1, H4, D1)
+            limit: Number of candles to fetch
+            
+        Returns:
+            Dict with candles array and metadata
+        """
+        candles = exchange.get_ohlcv(symbol, timeframe, limit)
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "candles": candles,
+            "latest_price": candles[-1]["close"] if candles else None
+        }
+        
+    def get_account_status() -> dict:
+        """
+        Get current account status including balance, equity, and positions.
+        
+        Returns:
+            Dict with account info and open positions
+        """
+        info = exchange.get_account_info()
+        positions = exchange.get_open_positions()
+        return {
+            "balance": info["balance"],
+            "equity": info["equity"],
+            "free_margin": info["free_margin"],
+            "open_positions": len(positions),
+            "positions": positions
+        }
+        
+    def calculate_indicators(symbol: str, indicators: list) -> dict:
+        """
+        Calculate technical indicators for a symbol.
+        
+        Args:
+            symbol: Trading pair
+            indicators: List of indicator configs, e.g. [{"name": "EMA", "period": 20}]
+            
+        Returns:
+            Dict with indicator values
+        """
+        from gemcode.trading.indicators import calculate_indicator
+        
+        candles = exchange.get_ohlcv(symbol, "H1", 200)
+        results = {}
+        
+        for ind in indicators:
+            results[f"{ind['name']}_{ind.get('period', '')}"] = calculate_indicator(
+                candles, ind["name"], ind.get("period"), ind.get("params", {})
+            )
+            
+        return results
+        
+    def submit_trade_signal(
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: float = None,
+        position_pct: float = 2.0,
+        strategy: str = "manual",
+        reason: str = ""
+    ) -> dict:
+        """
+        Submit a trade signal for validation and execution.
+        
+        This does NOT execute the trade directly. The signal goes to:
+        1. Overseer for constitutional validation
+        2. If approved, Executor for execution
+        
+        Args:
+            symbol: Trading pair
+            direction: "long" or "short"
+            entry_price: Target entry price
+            stop_loss: Stop loss price (REQUIRED)
+            take_profit: Take profit price (optional)
+            position_pct: Position size as % of account (max 5%)
+            strategy: Strategy name that generated this signal
+            reason: Explanation for the trade
+            
+        Returns:
+            Dict with signal ID and status
+        """
+        from gemcode.event_bus import get_bus
+        import uuid
+        
+        signal_id = str(uuid.uuid4())[:8]
+        signal = {
+            "id": signal_id,
+            "symbol": symbol,
+            "direction": direction,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "position_pct": position_pct,
+            "strategy": strategy,
+            "reason": reason,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Publish to bus for Overseer validation
+        bus = get_bus()
+        bus.publish("trade.signal", signal)
+        
+        return {
+            "signal_id": signal_id,
+            "status": "submitted",
+            "message": "Signal submitted to Overseer for validation"
+        }
+        
+    def get_trade_history(limit: int = 20, strategy: str = None) -> dict:
+        """
+        Get recent trade history from the journal.
+        
+        Args:
+            limit: Maximum trades to return
+            strategy: Filter by strategy name
+            
+        Returns:
+            Dict with trades and statistics
+        """
+        if strategy:
+            trades = journal.get_by_strategy(strategy, limit)
+        else:
+            trades = journal.get_recent(limit)
+            
+        stats = journal.calculate_stats(trades)
+        
+        return {
+            "trades": [t.__dict__ for t in trades],
+            "statistics": stats
+        }
+        
+    def get_behavioral_adjustments() -> dict:
+        """
+        Get active behavioral adjustments (procedural memory).
+        
+        These represent learned patterns that modify trading behavior
+        without explicit reasoning - the "feeling" system.
+        
+        Returns:
+            Dict with active adjustments and their sources
+        """
+        from gemcode.trading.survival import SurvivalManager
+        
+        # Build current context
+        context = {
+            "volatility_percentile": 50,  # Would be calculated
+            "previous_result": journal.get_recent(1)[0].profit_loss > 0 if journal.get_recent(1) else None,
+            "consecutive_losses": 0,  # Would be calculated
+        }
+        
+        adjustments = procedural.get_active_adjustments(context)
+        
+        return {
+            "context": context,
+            "adjustments": [
+                {"type": a[0], "value": a[1], "confidence": a[2]}
+                for a in adjustments
+            ]
+        }
+        
+    return [
+        get_market_data,
+        get_account_status,
+        calculate_indicators,
+        submit_trade_signal,
+        get_trade_history,
+        get_behavioral_adjustments,
+    ]
 ```
 
 ---
 
-## 6. Deployment Checklist
+## 7. Startup & Configuration
 
-### Phase 0: Infrastructure
-- [ ] Create schema migration V10 for trading tables
+### 7.1 Trading Mode Activation
+
+```python
+# gemcode/src/gemcode/trading/__init__.py
+
+"""GemTrade - Trading extension for GemCode."""
+
+from pathlib import Path
+from gemcode.config import GemCodeConfig
+
+def enable_trading(cfg: GemCodeConfig) -> None:
+    """Enable trading mode for GemCode."""
+    from gemcode.trading.agents import setup_trading_fleet
+    from gemcode.trading.config import load_trading_config
+    from gemcode.trading.constitution import TradingConstitution
+    from gemcode.trading.survival import SurvivalManager
+    
+    # Load trading config
+    trading_config = load_trading_config(cfg.project_root)
+    
+    # Setup trading agents as org members
+    setup_trading_fleet(cfg)
+    
+    # Initialize subsystems
+    cfg.trading_constitution = TradingConstitution(trading_config)
+    cfg.trading_survival = SurvivalManager(trading_config)
+    
+    # Add trading tools to tool inventory
+    from gemcode.tools.trading_tools import make_trading_tools
+    cfg.extra_tools.extend(make_trading_tools(cfg))
+    
+    # Load trading habits and triggers
+    _load_trading_habits(cfg)
+    _load_trading_triggers(cfg)
+    
+    print(f"[gemtrade] Trading mode enabled for {trading_config.default_symbol}")
+
+def _load_trading_habits(cfg):
+    """Load default trading habits."""
+    habits_path = cfg.project_root / ".gemcode" / "habits.json"
+    # Add trading habits if not present
+    # ...
+    
+def _load_trading_triggers(cfg):
+    """Load default trading triggers."""
+    triggers_path = cfg.project_root / ".gemcode" / "triggers.json"
+    # Add trading triggers if not present
+    # ...
+```
+
+### 7.2 CLI Integration
+
+```bash
+# Enable trading mode
+gemcode -C /path/to/project --trading
+
+# Or in super mode
+gemcode -C /path/to/project --super --trading
+
+# Trading-specific commands
+gemcode trade status          # Account status
+gemcode trade signals         # Pending signals
+gemcode trade journal         # Trade history
+gemcode trade analyze         # Run analysis
+```
+
+---
+
+## 8. Execution Roadmap
+
+### Phase 0: Foundation (GemCode Extension)
+- [ ] Create `gemcode/src/gemcode/trading/` module structure
+- [ ] Implement `TradingConstitution` with immutable rules
+- [ ] Implement `SurvivalManager` with tiers
+- [ ] Create trading agent skill files
+- [ ] Register trading agents as org members
+
+### Phase 1: Market Infrastructure
 - [ ] Implement `ExchangeConnector` interface
 - [ ] Implement `PaperTradingConnector`
-- [ ] Create `TradingOverseer` with all constitutional limits
-- [ ] Create `TradingLearner` with procedural memory
-- [ ] Implement EMA indicator
-- [ ] Implement ATR indicator
-- [ ] Create `EMACrossoverStrategy`
-- [ ] Integration tests for all components
+- [ ] Add market data tools
+- [ ] Add indicator calculations
+- [ ] Setup trading habits and triggers
 
-### Phase 1: Paper Trading
-- [ ] Connect data feed for XAU/USD (can use free APIs initially)
-- [ ] Implement heartbeat task for trading tick
-- [ ] Add trading state management
-- [ ] Implement trade journal recording
-- [ ] Create dashboard for monitoring (can be CLI-based)
-- [ ] Run 100 paper trades
-- [ ] Analyze results and tune parameters
+### Phase 2: Memory & Learning
+- [ ] Implement `TradeJournal` (episodic memory)
+- [ ] Implement `ProceduralMemoryManager` ("feeling" system)
+- [ ] Implement error pattern detection
+- [ ] Integrate with GemCode's delegation learning
 
-### Phase 2: Live Trading
-- [ ] Implement OANDA connector (or Alpaca for US equities)
-- [ ] Add proper API key management
-- [ ] Implement slippage tracking
-- [ ] Add alerting for circuit breakers
-- [ ] Human-in-the-loop approval for first 10 trades
-- [ ] Gradual position size increase
+### Phase 3: Paper Trading
+- [ ] Full agent coordination flow
+- [ ] Paper trade XAU/USD with EMA crossover
+- [ ] 100 paper trades validation
+- [ ] Tune procedural memory thresholds
+
+### Phase 4: Live Integration
+- [ ] Implement OANDA connector
+- [ ] Micro-live testing ($500-1000)
+- [ ] Human oversight dashboard
+- [ ] Gradual scaling
 
 ---
 
-This specification provides a complete technical blueprint for implementing GemTrade on top of Automaton. The key insight is that we're not building a trading bot—we're extending an autonomous agent with trading capabilities while maintaining all the safety, memory, and learning systems that make Automaton robust.
+This specification shows how GemTrade properly **extends GemCode** rather than being built on Automaton. The key is leveraging GemCode's existing multi-agent mesh, event bus, habits, triggers, and memory systems while adding Automaton's survival and constitutional concepts as new capabilities.

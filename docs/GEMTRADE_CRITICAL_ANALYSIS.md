@@ -6,7 +6,26 @@
 
 ## Executive Summary
 
-This document provides a rigorous, cross-questioning analysis of the proposed GemTrade autonomous trading agent. Rather than simply agreeing with assumptions, I challenge each premise and provide battle-tested insights from real trading experience.
+This document provides a rigorous, cross-questioning analysis of the proposed GemTrade autonomous trading agent. GemTrade is designed as an **extension of GemCode**, incorporating Automaton's survival mechanics and constitutional safeguards.
+
+**Core Architecture Decision**: Build on GemCode (Python/ADK), not Automaton (TypeScript).
+
+**Why GemCode as the foundation:**
+- Multi-agent mesh with background thread + async event loop
+- Event bus for agent communication (perfect for trading signals)
+- Self-healing loop (adapt for trade verification)
+- Tool synthesis (create trading tools from patterns)
+- Codebase awareness → Market awareness
+- Habits & triggers → Trading schedules & market event triggers
+- Delegation learning → Strategy performance learning
+- ADK integration with Google models (Gemini)
+
+**What we take from Automaton:**
+- Survival tiers (credits/balance-based operating modes)
+- Constitutional limits (immutable risk rules)
+- Financial state tracking (USDC/credits)
+- Child spawning → Strategy spawning
+- Treasury policy → Risk policy
 
 **Bottom line**: The concept is technically feasible but requires significant de-risking. The path to profitability is narrow, and most autonomous trading systems fail. This analysis identifies the critical success factors and proposes a realistic architecture that acknowledges these constraints.
 
