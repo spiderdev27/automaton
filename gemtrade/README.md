@@ -112,16 +112,17 @@ GemTrade automatically adjusts behavior based on capital:
 
 | Tier | Balance | Max Leverage | Risk/Trade | Capabilities |
 |------|---------|--------------|------------|--------------|
-| 🟢 HIGH | > ₹50,000 | 1:500 | 10% (₹5,000) | **Earned** through 10x growth |
-| 🟢 NORMAL | > ₹5,000 | 1:200 | 10% (₹500) | Starting tier - aggressive |
-| 🟠 LOW | > ₹1,000 | 1:100 | 7.5% (₹75) | Reduced, 1 position only |
-| 🔴 CRITICAL | > ₹100 | 1:50 | 0% | Close-only mode |
+| 🟢 HIGH | > ₹50,000 | **1:1000** | 10% (₹5,000) | **Earned** - near max leverage |
+| 🟢 NORMAL | > ₹5,000 | **1:500** | 10% (₹500) | Starting tier - full power |
+| 🟠 LOW | > ₹1,000 | **1:200** | 7.5% (₹75) | Reduced, 1 position only |
+| 🔴 CRITICAL | > ₹100 | **1:100** | 0% | Close-only mode |
 | ⚫ DEAD | ₹0 | N/A | N/A | Cannot trade |
 
 **Risk Philosophy**: 
+- **High leverage** = small margin = more flexibility (risk is controlled by STOP LOSS, not leverage)
 - **Aggressive per-trade risk** (up to 10%) to make meaningful profits
 - **Hard circuit breakers** to prevent account wipeout
-- **Stop losses are MANDATORY** - this is what makes aggression survivable
+- **Stop losses are MANDATORY** - this is what makes high leverage survivable
 
 ## Procedural Memory ("Feeling")
 

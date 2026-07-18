@@ -82,26 +82,26 @@ class LeverageConfig:
     """
     Leverage management configuration.
     
-    With ₹5,000 and high leverage, we need to be AGGRESSIVE but SMART:
-    - Use decent leverage to make meaningful profits
-    - Scale leverage with proven performance
-    - But always have stop losses to control actual risk
+    With ₹5,000 and broker offering 1:2000, USE IT AGGRESSIVELY:
+    - High leverage = small margin required = more trades possible
+    - Risk is controlled by STOP LOSS, not by leverage
+    - Leverage just determines margin, stop loss determines risk
     """
     
     # Broker maximum (what's available)
     broker_max_leverage: int = 2000
     
-    # Our limits per tier (what we allow ourselves)
-    starting_max_leverage: int = 200    # NORMAL tier - good starting leverage
-    earned_max_leverage: int = 500      # HIGH tier (earn through 10x growth)
-    reduced_leverage: int = 100         # LOW tier
-    critical_leverage: int = 50         # CRITICAL tier
+    # Our limits per tier - AGGRESSIVE
+    starting_max_leverage: int = 500    # NORMAL tier - use good leverage from start
+    earned_max_leverage: int = 1000     # HIGH tier - near max after proving profits
+    reduced_leverage: int = 200         # LOW tier - still decent
+    critical_leverage: int = 100        # CRITICAL tier - reduced but usable
     
     # Leverage scaling rules
-    consecutive_wins_to_increase: int = 5
-    consecutive_losses_to_decrease: int = 3
-    leverage_increase_step: int = 50    # Increase by 50x per step
-    leverage_decrease_step: int = 50    # Decrease by 50x per step
+    consecutive_wins_to_increase: int = 3   # Faster scaling up
+    consecutive_losses_to_decrease: int = 2  # Quick to protect
+    leverage_increase_step: int = 100   # Increase by 100x per step
+    leverage_decrease_step: int = 100   # Decrease by 100x per step
 
 
 @dataclass
