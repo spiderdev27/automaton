@@ -27,7 +27,8 @@ class MarketRegime(Enum):
     RANGING = "ranging"                     # Sideways, fade extremes
     VOLATILE = "volatile"                   # High volatility, reduce size
     QUIET = "quiet"                         # Low volatility, skip or reduce
-    NEWS_PENDING = "news_pending"           # High-impact news coming
+    NEWS_OPPORTUNITY = "news_opportunity"   # High-impact news = OPPORTUNITY
+    NEWS_ACTIVE = "news_active"             # News happening NOW
 
 
 class SignalQuality(Enum):
@@ -275,9 +276,13 @@ class MarketCondition:
     @property
     def regime(self) -> MarketRegime:
         """Determine current market regime."""
-        # High-impact news within 30 minutes
-        if self.high_impact_news_in_hours < 0.5:
-            return MarketRegime.NEWS_PENDING
+        # News within 30 minutes = OPPORTUNITY (not just risk)
+        if 0 < self.high_impact_news_in_hours < 0.5:
+            return MarketRegime.NEWS_OPPORTUNITY
+        
+        # News happening RIGHT NOW (< 5 min ago)
+        if -0.083 < self.high_impact_news_in_hours <= 0:
+            return MarketRegime.NEWS_ACTIVE
         
         # High volatility
         if self.atr_percentile > 80:
@@ -300,10 +305,6 @@ class MarketCondition:
     @property
     def should_trade(self) -> bool:
         """Is it a good time to trade?"""
-        # Don't trade during news
-        if self.regime == MarketRegime.NEWS_PENDING:
-            return False
-        
         # Don't trade when spread is too wide (>90th percentile)
         if self.spread_percentile > 90:
             return False
@@ -312,7 +313,31 @@ class MarketCondition:
         if self.regime == MarketRegime.QUIET and self.current_session == "asian":
             return False
         
+        # NEWS IS TRADEABLE - just with different parameters
+        # (handled by NewsTradeManager)
+        
         return True
+    
+    @property
+    def is_news_opportunity(self) -> bool:
+        """Is this a news trading opportunity?"""
+        return self.regime in (MarketRegime.NEWS_OPPORTUNITY, MarketRegime.NEWS_ACTIVE)
+    
+    @property
+    def news_trade_type(self) -> str:
+        """What type of news trade is this?"""
+        if self.high_impact_news_in_hours > 0.5:
+            return "none"
+        elif self.high_impact_news_in_hours > 0.083:  # > 5 min before
+            return "pre_news"  # Can position before
+        elif self.high_impact_news_in_hours > -0.083:  # Within 5 min of news
+            return "during_news"  # Spike phase
+        elif self.high_impact_news_in_hours > -0.25:  # 5-15 min after
+            return "post_news_immediate"  # Fade opportunity
+        elif self.high_impact_news_in_hours > -1:  # 15-60 min after
+            return "post_news_settle"  # Breakout opportunity
+        else:
+            return "none"
     
     @property
     def position_adjustment(self) -> float:

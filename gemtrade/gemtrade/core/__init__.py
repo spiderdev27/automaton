@@ -28,6 +28,14 @@ from gemtrade.core.adaptive_risk import (
     MarketRegime,
     ActiveTradeManager,
 )
+from gemtrade.core.news_trading import (
+    NewsTradeManager,
+    NewsTradeSetup,
+    NewsEvent,
+    NewsImpact,
+    NewsStrategy,
+    MAJOR_NEWS_PROFILES,
+)
 
 __all__ = [
     # Constitution
@@ -54,4 +62,11 @@ __all__ = [
     "MarketCondition",
     "MarketRegime",
     "ActiveTradeManager",
+    # News Trading
+    "NewsTradeManager",
+    "NewsTradeSetup",
+    "NewsEvent",
+    "NewsImpact",
+    "NewsStrategy",
+    "MAJOR_NEWS_PROFILES",
 ]
