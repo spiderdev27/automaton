@@ -26,11 +26,18 @@ Key features:
 ## Quick Start
 
 ```bash
-# Install
+# Install (basic)
 pip install gemtrade
 
+# Install with Google Cloud intelligence
+pip install gemtrade[cloud]
+
+# Install everything (cloud + local ML)
+pip install gemtrade[all]
+
 # Set API keys
-export GOOGLE_API_KEY="your-key"
+export GOOGLE_API_KEY="your-gemini-api-key"  # Get from https://aistudio.google.com/apikey
+export GOOGLE_CLOUD_PROJECT="your-project-id"  # For BigQuery
 
 # For Delta Exchange
 export DELTA_API_KEY="your-delta-key"
@@ -52,6 +59,9 @@ gemtrade status
 
 # View trade journal
 gemtrade journal
+
+# Get real-time market intelligence
+gemtrade intel XAUUSD --timeframe "6 hours"
 ```
 
 ## Architecture
@@ -193,6 +203,68 @@ after_loss:
 | High volatility | Reduce size 50% |
 | London/NY overlap | Increase size 20% |
 
+## Google Cloud Integration (NEW!)
+
+GemTrade leverages your Google Cloud credits for **real-time market intelligence**:
+
+### Gemini API with Web Search Grounding
+
+```python
+from gemtrade.cloud import GeminiIntelligence, IntelligenceQuery
+
+# Initialize (uses GOOGLE_API_KEY env var)
+intelligence = GeminiIntelligence()
+
+# Get real-time market intelligence
+result = await intelligence.gather_intelligence(
+    IntelligenceQuery(
+        symbols=["XAUUSD"],
+        timeframe="last 6 hours",
+        include_indirect=True,     # Detect indirect signals
+        include_contrarian=True,   # Challenge consensus
+    )
+)
+
+# Access signals
+for symbol, direction in result.signals.items():
+    confidence = result.confidence_scores[symbol]
+    print(f"{symbol}: {direction.value} ({confidence:.0%})")
+
+# Get actionable insights
+for insight in result.get_actionable_insights(min_confidence=0.7):
+    print(f"[{insight.confidence:.0%}] {insight.headline}")
+```
+
+### BigQuery for Trade Analytics
+
+```python
+from gemtrade.cloud import BigQueryStore
+
+store = BigQueryStore(project_id="your-project")
+
+# Get performance metrics
+metrics = store.get_performance_metrics(
+    start_date=datetime(2026, 1, 1),
+    end_date=datetime.utcnow(),
+)
+
+# Find winning patterns
+patterns = store.get_best_performing_patterns(
+    min_occurrences=5,
+    min_win_rate=0.6,
+)
+```
+
+### Cost: **₹0** (Free Tier)
+
+| Service | Usage | Free Tier |
+|---------|-------|-----------|
+| Gemini API (Flash) | ~2,500 requests/month | 45,000/month |
+| BigQuery Queries | ~10 GB/month | 1,000 GB/month |
+| BigQuery Storage | ~1 GB/month | 10 GB/month |
+
+See [GOOGLE_CLOUD_ARCHITECTURE.md](docs/GOOGLE_CLOUD_ARCHITECTURE.md) for full details.
+
 ## GemCode Integration
 
 GemTrade extends GemCode, so you get:
@@ -278,11 +350,13 @@ GemTrade extends GemCode, so you get:
 | Phase | Goal | Status |
 |-------|------|--------|
 | 0. Setup | Bootable package | ✅ Done |
-| 1. Infrastructure | Exchange connectors | 🔄 In Progress |
-| 2. Agents | Full agent fleet | 📋 Planned |
-| 3. Strategies | EMA crossover | 📋 Planned |
-| 4. Paper Trading | 100 trades | 📋 Planned |
-| 5. Live | Real money ($500) | 📋 Planned |
+| 1. Intelligence | Gemini + Web Search Grounding | ✅ Done |
+| 2. Data Store | BigQuery analytics | ✅ Done |
+| 3. Infrastructure | Exchange connectors | 🔄 In Progress |
+| 4. Agents | Full agent fleet | 📋 Planned |
+| 5. Strategies | EMA crossover + News | 📋 Planned |
+| 6. Paper Trading | 100 trades | 📋 Planned |
+| 7. Live | Real money (₹5,000) | 📋 Planned |
 
 ## Risk Warning
 

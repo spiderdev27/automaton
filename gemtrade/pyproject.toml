@@ -52,6 +52,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+cloud = [
+    # Google Cloud integration
+    "google-genai>=1.0.0",  # Gemini API
+    "google-cloud-bigquery>=3.0.0",  # BigQuery
+    "google-cloud-pubsub>=2.0.0",  # Pub/Sub for alerts
+    "google-cloud-secret-manager>=2.0.0",  # Secret storage
+]
+ml = [
+    # Local ML for hybrid approach
+    "transformers>=4.30.0",  # For FinBERT
+    "torch>=2.0.0",  # PyTorch backend
+    "sentence-transformers>=2.0.0",  # Embeddings
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -61,7 +74,7 @@ dev = [
     "mypy>=1.0.0",
 ]
 all = [
-    "gemtrade[dev]",
+    "gemtrade[cloud,ml,dev]",
 ]
 
 [project.scripts]
